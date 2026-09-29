@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@repo/contracts": ["./packages/contracts/src/index.ts"],
+      "@repo/db": ["./packages/db/src/index.ts"]
+    }
+  }
+}
