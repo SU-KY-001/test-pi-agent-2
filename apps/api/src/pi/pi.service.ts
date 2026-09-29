@@ -69,14 +69,15 @@ export class PiService {
       if (env.OPENCODE_API_KEY) {
         this.modelRuntime.setRuntimeApiKey("opencode-go", env.OPENCODE_API_KEY);
       }
-      const resolvedModel = this.modelRuntime.getModel(env.PI_PROVIDER, env.PI_MODEL);
+      const targetModelName = env.RESOLVED_MODEL;
+      const resolvedModel = this.modelRuntime.getModel(env.PI_PROVIDER, targetModelName);
       if (resolvedModel) {
         this.model = { id: resolvedModel.id };
       } else {
         const available = this.modelRuntime.getModels(env.PI_PROVIDER);
         if (available && available.length > 0 && available[0]) {
           this.model = { id: available[0].id };
-          console.warn(`⚠️ Warning: Model "${env.PI_MODEL}" not found. Falling back to "${this.model.id}".`);
+          console.warn(`⚠️ Warning: Model "${targetModelName}" not found. Falling back to "${this.model.id}".`);
         } else {
           console.warn(`⚠️ Warning: No models found for provider "${env.PI_PROVIDER}".`);
         }
