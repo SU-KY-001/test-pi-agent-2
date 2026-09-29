@@ -10,7 +10,8 @@ import { WRITER_SYSTEM_PROMPT, buildWriterPrompt } from "./prompts";
 export async function runWriterAgent(
   productData: ProductData,
   approvedPlan: ContentPlan,
-  approvedVersion: number
+  approvedVersion: number,
+  workflowRunId: number
 ): Promise<Advertisement> {
   return runStructuredAgent(
     WRITER_SYSTEM_PROMPT,
@@ -19,6 +20,7 @@ export async function runWriterAgent(
       JSON.stringify(approvedPlan),
       approvedVersion
     ),
-    AdvertisementSchema
+    AdvertisementSchema,
+    { workflowRunId, stepType: "WRITER" }
   );
 }

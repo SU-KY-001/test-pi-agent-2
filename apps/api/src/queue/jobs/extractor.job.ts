@@ -24,7 +24,7 @@ export async function handleExtractorJob(payload: AgentJobPayload): Promise<void
   await logEvent({ workflowRunId: run.id, type: "extractor.started", message: `Extractor started for workflow ${run.id}` });
 
   try {
-    const output = await runExtractorAgent(run.rawProductText);
+    const output = await runExtractorAgent(run.rawProductText, run.id);
     await insertStepVersion({
       workflowStepId: step.id,
       version: 1,

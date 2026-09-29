@@ -10,18 +10,20 @@ import {
   buildPlannerRegeneratePrompt,
 } from "./prompts";
 
-export async function runPlannerAgent(productData: ProductData): Promise<ContentPlan> {
+export async function runPlannerAgent(productData: ProductData, workflowRunId: number): Promise<ContentPlan> {
   return runStructuredAgent(
     PLANNER_SYSTEM_PROMPT,
     buildPlannerPrompt(JSON.stringify(productData)),
-    ContentPlanSchema
+    ContentPlanSchema,
+    { workflowRunId, stepType: "PLANNER" }
   );
 }
 
 export async function runPlannerRegenerateAgent(
   productData: ProductData,
   previousPlan: ContentPlan,
-  feedback: string
+  feedback: string,
+  workflowRunId: number
 ): Promise<ContentPlan> {
   return runStructuredAgent(
     PLANNER_SYSTEM_PROMPT,
@@ -30,6 +32,7 @@ export async function runPlannerRegenerateAgent(
       JSON.stringify(previousPlan),
       feedback
     ),
-    ContentPlanSchema
+    ContentPlanSchema,
+    { workflowRunId, stepType: "PLANNER" }
   );
 }

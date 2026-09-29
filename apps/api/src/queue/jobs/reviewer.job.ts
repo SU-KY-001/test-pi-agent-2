@@ -25,7 +25,7 @@ export async function handleReviewerJob(payload: AgentJobPayload): Promise<void>
   try {
     const productData = await loadLatestStepOutput(run.id, "EXTRACTOR");
     const advertisement = await loadLatestStepOutput(run.id, "WRITER");
-    const output = await runReviewerAgent(productData, advertisement);
+    const output = await runReviewerAgent(productData, advertisement, run.id);
     await insertStepVersion({
       workflowStepId: step.id,
       version: 1,

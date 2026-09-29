@@ -42,7 +42,8 @@ export async function handlePlannerJob(payload: AgentJobPayload): Promise<void> 
       const output = await runPlannerRegenerateAgent(
         productData,
         previousPlan,
-        payload.feedback as string
+        payload.feedback as string,
+        run.id
       );
       await insertStepVersion({
         workflowStepId: step.id,
@@ -54,7 +55,7 @@ export async function handlePlannerJob(payload: AgentJobPayload): Promise<void> 
       });
       await logEvent({ workflowRunId: run.id, type: "planner.regenerated", message: `Planner regenerated for workflow ${run.id}` });
     } else {
-      const output = await runPlannerAgent(productData);
+      const output = await runPlannerAgent(productData, run.id);
       await insertStepVersion({
         workflowStepId: step.id,
         version: 1,

@@ -6,6 +6,9 @@ import {
   createAgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { piService } from "../pi/pi.service";
+import { attachPiTracer } from "../pi/pi.tracer";
+import { log } from "../config/logger";
+import { env } from "../config/env";
 import { buildSchemaRetryPrompt } from "./prompts";
 import { MAX_AGENT_RETRY_COUNT } from "../workflow/workflow.types";
 
@@ -19,21 +22,37 @@ export interface AgentMessage {
   content?: string | AgentTextBlock[];
 }
 
+function readTextOfBlock(block: unknown): string {
+  if (!block || typeof block !== "object") return "";
+  if (!("text" in block)) return "";
+  return typeof block.text === "string" ? block.text : "";
+}
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content
-      .map((b) => (typeof b === "object" && b !== null && "text" in b ? String((b as AgentTextBlock).text ?? "") : ""))
-      .join("\n");
+    return content.map(readTextOfBlock).join("\n");
   }
   return "";
 }
 
+function readRoleOf(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  if (!("role" in message)) return undefined;
+  return typeof message.role === "string" ? message.role : undefined;
+}
+
+function readContentOf(message: unknown): unknown {
+  if (!message || typeof message !== "object") return undefined;
+  if (!("content" in message)) return undefined;
+  return message.content;
+}
+
 function getAssistantText(messages: unknown[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as AgentMessage | null;
-    if (m && typeof m === "object" && m.role === "assistant") {
-      return extractText(m.content);
+    const m = messages[i];
+    if (m && typeof m === "object" && readRoleOf(m) === "assistant") {
+      return extractText(readContentOf(m));
     }
   }
   return "";
@@ -58,26 +77,43 @@ export class AgentValidationError extends Error {
   }
 }
 
+export interface AgentRunOptions {
+  workflowRunId?: number;
+  stepType?: string;
+}
+
 /**
  * Why: backend owns schema enforcement. Pi is an LLM harness only —
  * parse + Zod.validate here, retry once with validation errors, then fail.
+ * Every run is traced: session events stream into pino + system_events via
+ * attachPiTracer, with a per-attempt summary logged at completion.
  */
 export async function runStructuredAgent<T>(
   systemPrompt: string,
   userPrompt: string,
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
+  options: AgentRunOptions = {}
 ): Promise<T> {
   if (!piService.modelRuntime || !piService.model) {
     throw new Error("Pi model runtime is not ready");
   }
+  const agentLog = log.child({
+    scope: "agent",
+    workflowRunId: options.workflowRunId ?? null,
+    step: options.stepType ?? "unknown",
+    model: piService.model.id,
+  });
   const liveModel = piService.modelRuntime.getModel("opencode-go", piService.model.id);
   if (!liveModel) throw new Error(`Model ${piService.model.id} is no longer available`);
 
   // Minimal resource surface: no skills, no extensions, no context files.
+  const settingsManager = SettingsManager.inMemory();
+  settingsManager.setDefaultThinkingLevel(env.PI_THINKING_LEVEL);
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: process.cwd(),
     agentDir: process.cwd(),
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
@@ -91,11 +127,33 @@ export async function runStructuredAgent<T>(
     model: liveModel,
     modelRuntime: piService.modelRuntime,
     sessionManager: SessionManager.inMemory(),
-    settingsManager: SettingsManager.inMemory(),
+    settingsManager,
     resourceLoader,
+    thinkingLevel: env.PI_THINKING_LEVEL,
     tools: [],
     noTools: "all",
   });
+
+  // Pi observability: subscribe BEFORE first prompt so no turn/message/tool
+  // event is missed; detach in finally. Trace rows land in system_events as
+  // pi.<step>.<turn|message|tool>.* — replayable per workflow after the run.
+  const tracer =
+    options.workflowRunId != null && options.stepType
+      ? attachPiTracer(session.subscribe.bind(session), {
+          workflowRunId: options.workflowRunId,
+          stepType: options.stepType,
+          attempt: 0,
+        })
+      : null;
+  const runStartedAt = Date.now();
+  agentLog.info(
+    {
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+      userPromptSnippet: userPrompt.slice(0, 500),
+    },
+    "agent run started"
+  );
 
   try {
     await session.prompt(userPrompt);
@@ -106,6 +164,7 @@ export async function runStructuredAgent<T>(
       try {
         parsedJson = JSON.parse(extractJson(raw));
       } catch {
+        agentLog.warn({ attempt, rawSnippet: raw.slice(0, 500) }, "agent returned invalid JSON");
         if (attempt >= MAX_AGENT_RETRY_COUNT) {
           throw new AgentValidationError("Agent returned invalid JSON", "Response is not valid JSON");
         }
@@ -114,7 +173,26 @@ export async function runStructuredAgent<T>(
         continue;
       }
       const validated = schema.safeParse(parsedJson);
-      if (validated.success) return validated.data;
+      if (validated.success) {
+        const summary = tracer?.summary();
+        agentLog.info(
+          {
+            attempt,
+            durationMs: Date.now() - runStartedAt,
+            outputSnippet: raw.slice(0, 500),
+            piTurns: summary?.turnCount ?? null,
+            piEvents: summary?.eventCount ?? null,
+            piTokenApprox: summary?.tokenApprox ?? null,
+            piDurationMs: summary?.durationMs ?? null,
+          },
+          "agent run succeeded"
+        );
+        return validated.data;
+      }
+      agentLog.warn(
+        { attempt, issues: validated.error.issues, rawSnippet: raw.slice(0, 500) },
+        "agent output failed schema validation"
+      );
       if (attempt >= MAX_AGENT_RETRY_COUNT) {
         throw new AgentValidationError(
           "Agent output failed schema validation",
@@ -125,7 +203,26 @@ export async function runStructuredAgent<T>(
       raw = getAssistantText(session.messages as unknown[]);
     }
     throw new AgentValidationError("Agent failed after retry", "No valid output produced");
+  } catch (err) {
+    const summary = tracer?.summary();
+    agentLog.error(
+      {
+        err,
+        durationMs: Date.now() - runStartedAt,
+        piTurns: summary?.turnCount ?? null,
+        piEvents: summary?.eventCount ?? null,
+        piLastText: summary?.lastTextSnippet ?? null,
+      },
+      "agent run failed"
+    );
+    throw err;
   } finally {
+    try {
+      await tracer?.flush();
+    } catch (err) {
+      agentLog.warn({ err }, "pi trace flush failed");
+    }
+    tracer?.detach();
     await session.dispose();
   }
 }

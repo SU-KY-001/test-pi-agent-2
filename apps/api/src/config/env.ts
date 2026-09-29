@@ -11,11 +11,14 @@ const EnvSchema = z
   .object({
     API_PORT: z.coerce.number().default(3001),
     WEB_URL: z.string().default("http://localhost:3000"),
+    NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+    LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("debug"),
     PGLITE_DATA_DIR: z.string().optional(),
     OPENCODE_API_KEY: z.string().optional(),
     OPENCODE_MODEL: z.string().optional(),
     PI_PROVIDER: z.string().default("opencode-go"),
     PI_MODEL: z.string().optional(),
+    PI_THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("medium"),
   })
   .transform((data) => ({
     ...data,
@@ -25,7 +28,7 @@ const EnvSchema = z
 const parsed = EnvSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error("❌ Invalid environment variables:", parsed.error.format());
+  console.error("Invalid environment variables:", parsed.error.format());
   process.exit(1);
 }
 

@@ -31,7 +31,7 @@ export async function handleWriterJob(payload: AgentJobPayload): Promise<void> {
     const productData = await loadLatestStepOutput(run.id, "EXTRACTOR");
     // Writer proves it uses the approved version: load approved plan, embed version in input.
     const approved = await loadApprovedPlannerOutput(run.id);
-    const output = await runWriterAgent(productData, approved.plan, approved.version);
+    const output = await runWriterAgent(productData, approved.plan, approved.version, run.id);
     await insertStepVersion({
       workflowStepId: step.id,
       version: 1,

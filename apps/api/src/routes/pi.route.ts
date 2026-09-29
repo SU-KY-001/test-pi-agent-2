@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { piService } from "../pi/pi.service";
+import { log } from "../config/logger";
 import { PiTestResponseSchema } from "@repo/contracts";
 
 export const piRoute = new Hono();
@@ -26,7 +27,7 @@ piRoute.post("/test", async (c) => {
 
     return c.json(parsed.data);
   } catch (err) {
-    console.error("Pi smoke test error:", err);
+    log.error({ err }, "Pi smoke test error");
     return c.json({ error: "Pi smoke test execution failed", details: String(err) }, 500);
   }
 });

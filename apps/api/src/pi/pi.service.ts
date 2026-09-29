@@ -1,5 +1,6 @@
-import { ModelRuntime, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import { env } from "../config/env";
+import { log } from "../config/logger";
 import { PI_MODEL_REFRESH_TIMEOUT_MS } from "../workflow/workflow.types";
 
 export interface AssistantTextBlock {
@@ -78,15 +79,18 @@ export class PiService {
         const available = this.modelRuntime.getModels(env.PI_PROVIDER);
         if (available && available.length > 0 && available[0]) {
           this.model = { id: available[0].id };
-          console.warn(`⚠️ Warning: Model "${targetModelName}" not found. Falling back to "${this.model.id}".`);
+          log.warn({ targetModelName, fallback: this.model.id }, "Model not found, falling back");
         } else {
-          console.warn(`⚠️ Warning: No models found for provider "${env.PI_PROVIDER}".`);
+          log.warn({ provider: env.PI_PROVIDER }, "No models found for provider");
         }
       }
       this.isReady = !!(this.model && (env.OPENCODE_API_KEY || process.env.OPENCODE_API_KEY));
-      console.log(`[PiService] Initialized. Provider: ${env.PI_PROVIDER}, Model: ${this.model?.id ?? "none"}, Ready: ${this.isReady}`);
+      log.info(
+        { provider: env.PI_PROVIDER, model: this.model?.id ?? "none", ready: this.isReady },
+        "PiService initialized"
+      );
     } catch (err) {
-      console.error("❌ Failed to initialize PiService:", err);
+      log.error({ err }, "Failed to initialize PiService");
       this.isReady = false;
     }
   }
@@ -101,16 +105,24 @@ export class PiService {
       throw new Error(`Model ${this.model.id} is no longer available in ModelRuntime`);
     }
 
+    const settingsManager = SettingsManager.inMemory();
+    settingsManager.setDefaultThinkingLevel(env.PI_THINKING_LEVEL);
+
     // Ephemeral session with strictly empty tools: no coding tools, no bash, no filesystem, no MCP
     const sessionResult = await createAgentSession({
       model: liveModel,
       modelRuntime: this.modelRuntime,
       sessionManager: SessionManager.inMemory(),
+      settingsManager,
+      thinkingLevel: env.PI_THINKING_LEVEL,
       tools: [],
     });
-
     const session = sessionResult.session;
 
+    const startedAt = Date.now();
+    // Smoke calls are untraced by design (no workflowRunId): pino carries the run.
+    const smokeLog = log.child({ scope: "pi", op: "smoke", model: this.model.id });
+    smokeLog.info("pi smoke started");
     try {
       const promptText = "Return exactly the single word: PONG";
       await session.prompt(promptText);
@@ -125,12 +137,16 @@ export class PiService {
         responseText = extractTextFromContent(assistantMsg.content);
       }
 
+      smokeLog.info({ durationMs: Date.now() - startedAt, responseLength: responseText.length }, "pi smoke succeeded");
       return {
         ok: true,
         provider: env.PI_PROVIDER,
         model: this.model.id,
         response: responseText.trim() || "PONG",
       };
+    } catch (err) {
+      smokeLog.error({ err, durationMs: Date.now() - startedAt }, "pi smoke failed");
+      throw err;
     } finally {
       await session.dispose();
     }

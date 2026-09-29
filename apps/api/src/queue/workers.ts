@@ -1,4 +1,5 @@
 import { db, systemEvents } from "@repo/db";
+import { log } from "../config/logger";
 import { boss } from "./boss";
 import { DEMO_PING_QUEUE, WORKFLOW_QUEUES, type AgentJobPayload } from "../workflow/workflow.types";
 import { handleExtractorJob } from "./jobs/extractor.job";
@@ -26,7 +27,7 @@ export async function registerWorkers(): Promise<void> {
   await boss.work(DEMO_PING_QUEUE, async (jobs: QueueJob[]) => {
     const job = jobs[0];
     if (!job) return { success: false };
-    console.log(`[Queue Worker] Processing job ${job.id}:`, job.data);
+    log.info({ jobId: job.id, data: job.data }, "[Queue Worker] Processing job");
     await db.insert(systemEvents).values({
       type: "demo-ping",
       message: JSON.stringify(job.data ?? {}),

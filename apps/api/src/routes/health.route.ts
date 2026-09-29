@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { pglite } from "@repo/db";
 import { boss } from "../queue/boss";
+import { log } from "../config/logger";
 import { piService } from "../pi/pi.service";
 import { HealthResponseSchema } from "@repo/contracts";
 
@@ -12,7 +13,7 @@ healthRoute.get("/", async (c) => {
     const res = await pglite.query("SELECT 1 as ok;");
     dbOk = Array.isArray(res?.rows) && res.rows.length > 0;
   } catch (err) {
-    console.error("Database health check failed:", err);
+    log.error({ err }, "Database health check failed");
   }
 
   let queueOk = false;
@@ -20,7 +21,7 @@ healthRoute.get("/", async (c) => {
     const queue = await boss.getQueue("demo-ping");
     queueOk = !!queue;
   } catch (err) {
-    console.error("Queue health check failed:", err);
+    log.error({ err }, "Queue health check failed");
   }
 
   const piOk = piService.isReady;

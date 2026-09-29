@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { boss } from "../queue/boss";
-import { DEMO_PING_QUEUE } from "../workflow/workflow.types";
+import { log } from "../config/logger";
 import { QueueTestResponseSchema } from "@repo/contracts";
+import { DEMO_PING_QUEUE } from "../workflow/workflow.types";
 
 export const queueRoute = new Hono();
 
@@ -24,7 +25,7 @@ queueRoute.post("/test", async (c) => {
 
     return c.json(parsed.data);
   } catch (err) {
-    console.error("Queue test error:", err);
+    log.error({ err }, "Queue test error");
     return c.json({ error: "Failed to send job to queue", details: String(err) }, 500);
   }
 });

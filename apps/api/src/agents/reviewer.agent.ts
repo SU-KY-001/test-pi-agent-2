@@ -9,11 +9,13 @@ import { REVIEWER_SYSTEM_PROMPT, buildReviewerPrompt } from "./prompts";
 
 export async function runReviewerAgent(
   productData: ProductData,
-  advertisement: Advertisement
+  advertisement: Advertisement,
+  workflowRunId: number
 ): Promise<ReviewResult> {
   return runStructuredAgent(
     REVIEWER_SYSTEM_PROMPT,
     buildReviewerPrompt(JSON.stringify(productData), JSON.stringify(advertisement)),
-    ReviewResultSchema
+    ReviewResultSchema,
+    { workflowRunId, stepType: "REVIEWER" }
   );
 }

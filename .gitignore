@@ -23,6 +23,8 @@ out/
 
 # database
 packages/db/data/pgdata/
+packages/db/data/pgdata-fresh/
+pgdata.bak/
 !packages/db/data/.gitkeep
 
 # logs
