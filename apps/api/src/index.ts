@@ -8,6 +8,7 @@ import { piService } from "./pi/pi.service";
 import { healthRoute } from "./routes/health.route";
 import { queueRoute } from "./routes/queue.route";
 import { piRoute } from "./routes/pi.route";
+import { workflowRoute } from "./routes/workflow.route";
 
 console.log("🚀 Starting Su Ky Agent Demo API...");
 
@@ -99,6 +100,7 @@ app.use(
 app.route("/health", healthRoute);
 app.route("/queue", queueRoute);
 app.route("/pi", piRoute);
+app.route("/workflows", workflowRoute);
 
 app.get("/", (c) => {
   return c.text("Su Ky Agent Demo API is running");

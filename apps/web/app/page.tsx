@@ -1,158 +1,231 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { fetchHealth, testQueue, testPi } from "../lib/api";
-import type { HealthResponse } from "@repo/contracts";
+import { useEffect, useRef, useState } from "react";
+import type { GetWorkflowResponse } from "@repo/contracts";
+import {
+  approvePlanner,
+  createWorkflow,
+  fetchWorkflow,
+  regeneratePlanner,
+} from "../lib/workflow-api";
+
+const DEFAULT_INPUT = `Bình giữ nhiệt 750ml.
+Giữ lạnh 18 giờ, giữ nóng 10 giờ.
+Vỏ inox.
+Giá 299.000đ.
+Đối tượng là sinh viên và dân văn phòng.`;
+
+type StepView = GetWorkflowResponse["steps"][number];
+
+function stepByType(steps: StepView[], type: string): StepView | undefined {
+  return steps.find((s) => s.type === type);
+}
+
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 export default function HomePage() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [rawInput, setRawInput] = useState<string>(DEFAULT_INPUT);
+  const [workflowId, setWorkflowId] = useState<number | null>(null);
+  const [workflow, setWorkflow] = useState<GetWorkflowResponse | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
-  const [queueLoading, setQueueLoading] = useState<boolean>(false);
-  const [queueOutput, setQueueOutput] = useState<string | null>(null);
+  useEffect(() => {
+    if (workflowId == null) return;
+    const poll = async () => {
+      try {
+        setWorkflow(await fetchWorkflow(workflowId));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    };
+    void poll();
+    pollRef.current = setInterval(() => void poll(), 1000);
+    return () => {
+      clearInterval(pollRef.current);
+    };
+  }, [workflowId]);
 
-  const [piLoading, setPiLoading] = useState<boolean>(false);
-  const [piOutput, setPiOutput] = useState<string | null>(null);
-
-  const refreshHealth = async () => {
+  const handleStart = async () => {
+    setStarting(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const data = await fetchHealth();
-      setHealth(data);
+      const res = await createWorkflow(rawInput);
+      setWorkflowId(res.id);
+      setWorkflow(null);
+      setFeedback("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      setStarting(false);
     }
   };
 
-  useEffect(() => {
-    refreshHealth();
-  }, []);
-
-  const handleTestQueue = async () => {
+  const handleRegenerate = async () => {
+    if (workflowId == null || !feedback.trim()) return;
+    setActing(true);
+    setError(null);
     try {
-      setQueueLoading(true);
-      setQueueOutput("Sending job to pg-boss queue...");
-      const res = await testQueue();
-      setQueueOutput(`Job Enqueued! Job ID: ${res.jobId}\nWorker processing into PGlite system_events...`);
-      await refreshHealth();
+      await regeneratePlanner(workflowId, feedback.trim());
+      setFeedback("");
+      setWorkflow(await fetchWorkflow(workflowId));
     } catch (err) {
-      setQueueOutput(`Queue Test Error: ${err instanceof Error ? err.message : String(err)}`);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setQueueLoading(false);
+      setActing(false);
     }
   };
 
-  const handleTestPi = async () => {
+  const handleApprove = async () => {
+    if (workflowId == null || !workflow) return;
+    const planner = stepByType(workflow.steps, "PLANNER");
+    if (!planner?.currentVersion) return;
+    setActing(true);
+    setError(null);
     try {
-      setPiLoading(true);
-      setPiOutput("Creating ephemeral Pi session and prompting model for 'PONG'...");
-      const res = await testPi();
-      setPiOutput(`Model Response: ${res.response}\nProvider: ${res.provider} | Model: ${res.model}`);
-      await refreshHealth();
+      await approvePlanner(workflowId, planner.currentVersion);
+      setWorkflow(await fetchWorkflow(workflowId));
     } catch (err) {
-      setPiOutput(`Pi Test Error: ${err instanceof Error ? err.message : String(err)}`);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setPiLoading(false);
+      setActing(false);
     }
   };
+
+  const planner = workflow ? stepByType(workflow.steps, "PLANNER") : undefined;
+  const writer = workflow ? stepByType(workflow.steps, "WRITER") : undefined;
+  const reviewer = workflow ? stepByType(workflow.steps, "REVIEWER") : undefined;
+  const extractor = workflow ? stepByType(workflow.steps, "EXTRACTOR") : undefined;
+  const plannerCurrent = planner?.versions.find((v) => v.version === planner.currentVersion);
+  const writerCurrent = writer?.versions.find((v) => v.version === writer.currentVersion);
+  const reviewerCurrent = reviewer?.versions.find((v) => v.version === reviewer.currentVersion);
+  const reviewOutput = (reviewerCurrent?.outputJson ?? null) as {
+    passed?: boolean;
+    issues?: { claim: string; reason: string; expectedFact: string | null }[];
+  } | null;
+  const adOutput = (writerCurrent?.outputJson ?? null) as {
+    headline?: string;
+    body?: string;
+    callToAction?: string;
+  } | null;
 
   return (
     <div className="container">
-      <h1>Sử Ký Agent Stack Demo</h1>
+      <h1>Ad Workflow Demo</h1>
 
-      <div className="status-grid">
-        <div className="status-row">
-          <span className="service-name">Web</span>
-          <span className="badge badge-ok">✓ OK</span>
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">API</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.api ? (
-            <span className="badge badge-ok">✓ OK</span>
-          ) : (
-            <span className="badge badge-error">✗ Offline</span>
-          )}
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">PGlite</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.database ? (
-            <span className="badge badge-ok">✓ OK</span>
-          ) : (
-            <span className="badge badge-error">✗ Unavailable</span>
-          )}
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">Drizzle</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.database ? (
-            <span className="badge badge-ok">✓ OK</span>
-          ) : (
-            <span className="badge badge-error">✗ Unavailable</span>
-          )}
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">pg-boss</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.queue ? (
-            <span className="badge badge-ok">✓ OK</span>
-          ) : (
-            <span className="badge badge-error">✗ Offline</span>
-          )}
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">Pi SDK</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.api ? (
-            <span className="badge badge-ok">✓ Loaded</span>
-          ) : (
-            <span className="badge badge-error">✗ Unloaded</span>
-          )}
-        </div>
-
-        <div className="status-row">
-          <span className="service-name">OpenCode Go</span>
-          {loading ? (
-            <span className="badge badge-pending">...</span>
-          ) : health?.services.pi ? (
-            <span className="badge badge-ok">✓ Configured</span>
-          ) : (
-            <span className="badge badge-pending">! Key Required</span>
-          )}
-        </div>
-      </div>
-
-      <div className="actions">
-        <button onClick={handleTestQueue} disabled={queueLoading}>
-          {queueLoading ? "Testing Queue..." : "[Test Queue]"}
+      <section>
+        <h2>1. Product input</h2>
+        <textarea
+          rows={6}
+          cols={70}
+          value={rawInput}
+          onChange={(e) => setRawInput(e.target.value)}
+        />
+        <br />
+        <button onClick={handleStart} disabled={starting || !rawInput.trim()}>
+          {starting ? "Starting..." : "Start Workflow"}
         </button>
-        <button onClick={handleTestPi} disabled={piLoading}>
-          {piLoading ? "Testing Pi SDK..." : "[Test Pi]"}
-        </button>
-      </div>
+        {workflowId != null && <p>Workflow #{workflowId}</p>}
+      </section>
 
-      {(queueOutput || piOutput || error) && (
-        <div className="output-box">
-          <div className="output-title">Console Output:</div>
-          {error && <div style={{ color: "var(--error)" }}>{`Error: ${error}`}</div>}
-          {queueOutput && <div>{queueOutput}</div>}
-          {piOutput && <div>{piOutput}</div>}
-        </div>
+      {error && (
+        <section>
+          <h2>Error</h2>
+          <pre>{error}</pre>
+        </section>
+      )}
+
+      {workflow && (
+        <>
+          <section>
+            <h2>2. Pipeline state ({workflow.status})</h2>
+            <ul>
+              <li>Extractor — {extractor?.status ?? "PENDING"}</li>
+              <li>
+                Planner — {planner?.status ?? "PENDING"}
+                {planner?.currentVersion != null && ` (v${planner.currentVersion})`}
+                {planner?.approvedVersion != null && ` approved v${planner.approvedVersion}`}
+              </li>
+              <li>Writer — {writer?.status ?? "PENDING"}</li>
+              <li>Reviewer — {reviewer?.status ?? "PENDING"}</li>
+            </ul>
+          </section>
+
+          {workflow.status === "WAITING_FOR_HUMAN" && plannerCurrent && (
+            <section>
+              <h2>3. Planner review (v{planner?.currentVersion})</h2>
+              <pre>{formatJson(plannerCurrent.outputJson)}</pre>
+              {planner && planner.versions.length > 1 && (
+                <p>
+                  Versions: {planner.versions.map((v) => `v${v.version}`).join(", ")} (current v
+                  {planner.currentVersion})
+                </p>
+              )}
+              <textarea
+                rows={3}
+                cols={70}
+                placeholder="Feedback, e.g. Tập trung hoàn toàn vào sinh viên..."
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+              />
+              <br />
+              <button onClick={handleRegenerate} disabled={acting || !feedback.trim()}>
+                Regenerate
+              </button>{" "}
+              <button onClick={handleApprove} disabled={acting}>
+                Approve & Continue
+              </button>
+            </section>
+          )}
+
+          {workflow.status === "COMPLETED" && (
+            <section>
+              <h2>4. Result</h2>
+              <p>
+                Extractor ✓ Planner ✓ v{planner?.approvedVersion} approved Writer ✓ Reviewer ✓
+              </p>
+              {adOutput && (
+                <>
+                  <h3>Advertisement</h3>
+                  <p><strong>{adOutput.headline}</strong></p>
+                  <p>{adOutput.body}</p>
+                  <p>CTA: {adOutput.callToAction}</p>
+                </>
+              )}
+              {reviewOutput && (
+                <>
+                  <h3>Review — {reviewOutput.passed ? "PASS" : "FAILED FACT CHECK"}</h3>
+                  {!reviewOutput.passed && (
+                    <ul>
+                      {(reviewOutput.issues ?? []).map((issue, i) => (
+                        <li key={i}>
+                          {issue.claim} — {issue.reason}
+                          {issue.expectedFact ? ` (expected: ${issue.expectedFact})` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+
+          {workflow.status === "FAILED" && (
+            <section>
+              <h2>Workflow failed</h2>
+              <pre>{formatJson(workflow.steps)}</pre>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
