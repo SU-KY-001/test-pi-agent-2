@@ -1,6 +1,6 @@
 # Su Ky Agent Demo Monorepo
 
-Full-stack demo proving zero-Docker, zero-Redis, and zero-external-Postgres architecture using embedded PGlite, local background queues with pg-boss, and the Pi coding agent runtime.
+Full-stack demo proving zero-Docker, zero-Redis, and zero-external-Postgres architecture using embedded PGlite, local background queues with pg-boss, and the Pi coding agent runtime. Current focus: a 4-agent advertisement pipeline (Extractor → Planner → Writer → Reviewer) with a human-in-the-loop gate on the plan.
 
 ---
 
@@ -10,13 +10,13 @@ Full-stack demo proving zero-Docker, zero-Redis, and zero-external-Postgres arch
 | :--- | :--- | :--- |
 | **Runtime & Package Manager** | Bun 1.4+ | Monorepo package manager and high-performance server runtime |
 | **Monorepo Build System** | Turborepo 2.x | Task orchestration and workspace management |
-| **Frontend** | Next.js 15 (React 19) | App Router web dashboard (`apps/web`) |
-| **Backend API** | Hono | Native Bun HTTP server framework (`apps/api`) |
-| **Embedded Database** | PGlite (v0.2+) | In-process WebAssembly Postgres runtime (`packages/db`) |
-| **ORM & Migrations** | Drizzle ORM | Type-safe schema definitions and programmatic migrations |
-| **Job Queue** | pg-boss (v12+) | Background job processing powered directly by PGlite |
-| **AI / Agent Engine** | Pi SDK (`@earendil-works/pi-coding-agent`) | Agent model runtime with OpenCode Go provider |
-| **Validation & Contracts** | Zod (v3.24+) | Cross-boundary payload schemas and TypeScript types (`packages/contracts`) |
+| **Frontend** | Next.js 15 (React 19) | App Router dashboard (`apps/web`) |
+| **Backend API** | Hono | Native Bun HTTP server (`apps/api`, port 3001) |
+| **Embedded Database** | PGlite (v0.2+) | In-process Postgres (`packages/db`) |
+| **ORM & Migrations** | Drizzle ORM | Type-safe schema + programmatic migrations |
+| **Job Queue** | pg-boss (v12+) | Background jobs via `fromPglite(pglite)` |
+| **AI / Agent Engine** | Pi SDK (`@earendil-works/pi-coding-agent`) | Ephemeral sessions, OpenCode Go provider, `tools: []` |
+| **Validation & Contracts** | Zod (v3.24+) | Cross-boundary schemas (`packages/contracts`) |
 
 ---
 
@@ -25,61 +25,65 @@ Full-stack demo proving zero-Docker, zero-Redis, and zero-external-Postgres arch
 ```
 su-ky-agent-demo/
 ├── apps/
-│   ├── api/                  # Hono backend API on Bun (Port 3001)
-│   │   └── src/
-│   │       ├── config/       # Environment validation (Zod)
-│   │       ├── pi/           # Pi agent service runtime
-│   │       ├── queue/        # pg-boss queue setup and background workers
-│   │       ├── routes/       # API route handlers (health, queue, pi)
-│   │       └── index.ts      # Server entrypoint and lifecycle orchestrator
-│   └── web/                  # Next.js 15 App Router dashboard (Port 3000)
-│       ├── app/              # Page layouts, styles, and UI components
-│       └── lib/              # Client-side API fetchers
+│   ├── api/src/
+│   │   ├── config/       # env (Zod), logger
+│   │   ├── pi/           # pi.service (ModelRuntime), pi.tracer (events → system_events)
+│   │   ├── agents/       # agent-runner + extractor/planner/writer/reviewer + prompts
+│   │   ├── queue/        # boss (singleton) + workers + jobs/*.job.ts
+│   │   ├── workflow/     # workflow.types / service / repository
+│   │   ├── routes/       # health, queue, pi, workflow, events (SSE)
+│   │   └── index.ts      # 9-step boot + shutdown/drain
+│   └── web/
+│       ├── app/page.tsx  # dashboard: create → HITL card → ad card + TracePanel
+│       ├── components/trace-panel.tsx # SSE timeline
+│       └── lib/          # api.ts (health/queue/pi), workflow-api.ts (workflows + SSE)
 ├── packages/
-│   ├── contracts/            # Shared Zod schemas and TypeScript types (@repo/contracts)
-│   │   └── src/              # Health, queue, and Pi schemas
-│   └── db/                   # Embedded database layer (@repo/db)
-│       ├── src/              # PGlite client, Drizzle schema, and programmatic migrator
-│       ├── data/             # Local PGlite storage directory
-│       └── drizzle/          # Generated SQL migration files
-├── turbo.json                # Turborepo task pipeline configuration
-├── package.json              # Bun workspace root configuration
-├── .env.example              # Environment variables template
-└── AGENTS.md                 # Monorepo architectural rules and conventions
+│   ├── contracts/src/    # health, queue, pi + workflow/{api, product-data, content-plan, advertisement, review-result, events}
+│   └── db/
+│       ├── src/          # client (PGlite singleton), drizzle, migrate, schema/*
+│       ├── drizzle/      # 0000 system_events, 0001 workflow_runs/steps/versions
+│       └── data/pgdata/  # local PGlite storage (gitignored except .gitkeep)
+├── turbo.json
+├── .env.example
+└── AGENTS.md
 ```
 
 ### Architectural Invariants
-1. **Single Database Owner**: `apps/api` is the sole runtime owner of `@repo/db` (PGlite and pg-boss). `apps/web` communicates exclusively via HTTP to `apps/api` and never imports `@repo/db`.
-2. **Type-Safe Boundary**: All API request and response contracts are shared via `@repo/contracts`.
-3. **Zero External Daemons**: No Docker containers, Redis instances, or external Postgres services required.
+1. **Single Database Owner**: only `apps/api` imports `@repo/db`. `apps/web` talks HTTP only.
+2. **Type-Safe Boundary**: every request/response has a Zod schema in `@repo/contracts`. API uses `.parse()`, web uses `safeParse()`.
+3. **Zero External Daemons**: no Docker, Redis, or external Postgres.
 
 ---
 
 ## Environment Setup
 
 ### 1. Prerequisites
-- **Bun**: v1.2+ (Recommended: Bun v1.4+)
+- **Bun** v1.4+ (`bun@1.4.0` in `packageManager`)
   ```bash
   curl -fsSL https://bun.sh/install | bash
   ```
 
-### 2. Configure Environment Variables
-Copy `.env.example` to create `.env` at the monorepo root:
+### 2. Configure Environment
 ```bash
 cp .env.example .env
 ```
 
-| Variable | Default Value | Description |
+| Variable | Default | Description |
 | :--- | :--- | :--- |
-| `API_PORT` | `3001` | Port for the Hono backend server |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` | Backend API URL used by the web frontend |
-| `PGLITE_DATA_DIR` | `./packages/db/data/pgdata` | Data directory path for PGlite database persistence |
-| `OPENCODE_API_KEY` | *(Optional)* | API key for OpenCode Go AI provider |
-| `PI_PROVIDER` | `opencode-go` | Pi SDK provider identifier |
-| `PI_MODEL` | `gemini-2.5-flash` | Pi SDK default model |
+| `API_PORT` | `3001` | Hono port |
+| `WEB_URL` | `http://localhost:3000` | Allowed web origin |
+| `LOG_LEVEL` | `debug` | pino level |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` | API URL used by web |
+| `PGLITE_DATA_DIR` | `./packages/db/data/pgdata` | PGlite persistence dir |
+| `OPENCODE_API_KEY` | *(empty)* | OpenCode Go key (required for real Pi calls) |
+| `PI_PROVIDER` | `opencode-go` | Pi provider id |
+| `PI_MODEL` | *(none)* | Preferred model, takes precedence |
+| `OPENCODE_MODEL` | *(none)* | Fallback model alias |
+| `PI_THINKING_LEVEL` | `medium` | `off/minimal/low/medium/high/xhigh/max` |
 
-### 3. Install Dependencies
-Install all workspace dependencies using Bun:
+Resolved model: `PI_MODEL || OPENCODE_MODEL || "minimax-m3"`. Pi stays non-ready until a model + key resolve; `/pi/test` then returns 503.
+
+### 3. Install
 ```bash
 bun install
 ```
@@ -88,72 +92,77 @@ bun install
 
 ## Startup Lifecycle
 
-The backend API (`apps/api/src/index.ts`) enforces an ordered 9-step startup lifecycle to guarantee service readiness before opening network traffic:
+`apps/api/src/index.ts` boots in strict order, fail-fast (`process.exit(1)`) on migrate/boss/workers failure. `piService.init()` is non-fatal so `/health` can still report `pi: false`.
 
 ```mermaid
 graph TD
-    A[1. Validate Environment] --> B[2. Initialize PGlite Singleton]
-    B --> C[3. Connect Drizzle ORM]
-    C --> D[4. Apply Programmatic Migrations]
-    D --> E[5. Initialize pg-boss Queue Engine]
-    E --> F[6. Verify / Create Queues]
-    F --> G[7. Register Queue Workers]
-    G --> H[8. Initialize Pi Agent Runtime]
-    H --> I[9. Start Hono HTTP Server on Bun]
+    A[1. Validate env] --> B[2. PGlite singleton]
+    B --> C[3. Drizzle connect]
+    C --> D[4. runMigrations]
+    D --> E[5. initBoss fromPglite]
+    E --> F[6. Create 5 queues]
+    F --> G[7. registerWorkers]
+    G --> H[8. Pi runtime init]
+    H --> I[9. Bun.serve :3001]
 ```
 
-1. **Environment Validation**: Validates all required environment variables using Zod schemas (`env.ts`).
-2. **PGlite Singleton Initialization**: Boots the in-process PGlite database engine using the configured data directory.
-3. **Drizzle Connection**: Binds Drizzle ORM to the running PGlite instance.
-4. **Database Migrations**: Runs programmatic migrations (`runMigrations`) from `./packages/db/drizzle`.
-5. **pg-boss Engine Initialization**: Starts pg-boss using the internal PGlite connection adapter.
-6. **Queue Provisioning**: Asserts creation of background queues (e.g., `demo-ping`).
-7. **Worker Registration**: Registers event handlers and background processors for queues.
-8. **Pi Agent Runtime Setup**: Configures model providers and initializes the Pi coding agent service.
-9. **Hono Server Startup**: Binds `Bun.serve` on port `3001` with CORS and request-draining middleware.
+Queues: `demo-ping` + `agent.extract-product`, `agent.plan-content`, `agent.write-ad`, `agent.review-ad`.
 
 ### Graceful Shutdown
-Upon receiving `SIGINT` or `SIGTERM`, `apps/api` executes an orderly shutdown:
-1. Stops accepting incoming HTTP connections.
-2. Drains active requests with a grace timeout.
-3. Gracefully stops pg-boss queue consumers.
-4. Closes the PGlite database client cleanly.
+On `SIGINT`/`SIGTERM`: `server.stop(false)` → drain in-flight up to 3s (poll 50ms) → `server.stop(true)` if leftover → `stopBoss()` → `closePglite()`. New requests get 503 with `x-request-id` while draining.
 
 ---
 
-## Development Instructions
+## Workflow: 4-Agent Ad Pipeline
 
-### Run Monorepo Concurrently
-Start all applications (`apps/api` and `apps/web`) concurrently with live reload:
-
-```bash
-bun run dev
+```
+POST /workflows {rawText}
+ → EXTRACTOR (product-data)
+ → PLANNER (content-plan) → WAITING_FOR_HUMAN
+ → approve → WRITER (advertisement) → REVIEWER (review-result) → COMPLETED
+              ↳ regenerate {feedback, baseVersion} → PLANNER again (append-only version+1)
 ```
 
-Turborepo will orchestrate:
-- **Web Dashboard**: [http://localhost:3000](http://localhost:3000)
-- **Backend API**: [http://localhost:3001](http://localhost:3001)
+- **Append-only versions**: every attempt inserts a new `step_versions` row. Planner regenerate never overwrites.
+- **HITL gate**: only the planner pauses for humans. Writer loads `loadApprovedPlannerOutput` and throws if no approved version.
+- **Jobs**: `queue/jobs/*.job.ts` share one shape — set RUNNING + log → load previous output → `runStructuredAgent` → insert version → set next status. `AgentValidationError` or missing/not-found → FAILED terminal (no retry). Other errors → FAILED + rethrow for pg-boss retry (max 3).
+- **Agents**: `runStructuredAgent(system, user, schema)` uses ephemeral Pi session (`tools: []`), JSON extraction with ``` fences, 1 schema retry, tracer attach, dispose in `finally`. Note: provider string is currently hardcoded to `"opencode-go"`.
+- **Trace**: `pi.tracer` maps session events to `pi.<step>.<turn|message|tool>.*`, drops streaming noise, caps metadata at 4KB, writes to `system_events`.
+- **DB tables**: `workflow_runs`, `workflow_steps`, `step_versions`, `system_events`. Status columns are plain `text`; Zod owns the enum.
 
-### Run Workspaces Individually
-You can also run specific applications directly:
+Web flow (`app/page.tsx`): input → `createWorkflow` → poll `fetchWorkflow` every 1.5s → HITL card (version tabs + feedback/regenerate/approve) → completed ad card + review verdict → `TracePanel` subscribes SSE.
+
+---
+
+## Development
 
 ```bash
-# Start backend API only (Port 3001)
-bun --filter api dev
+bun run dev        # web :3000 + api :3001 via Turborepo
+bun run build      # topological build
+bun run typecheck  # tsc --noEmit all workspaces
+```
 
-# Start frontend dashboard only (Port 3000)
+Individually:
+```bash
+bun --filter api dev
 bun --filter web dev
 ```
+
+No tests by policy (`AGENTS.md`). Verify with typecheck + build + endpoint probes + dashboard buttons.
 
 ---
 
 ## API Endpoints
 
-The backend exposes the following endpoints:
-
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/` | Basic API service greeting |
-| `GET` | `/health` | Aggregate health status of API, database, queue, and Pi agent |
-| `POST` | `/queue/test` | Enqueue a sample background job (`demo-ping`) to pg-boss |
-| `POST` | `/pi/test` | Execute a sample prompt invocation with the Pi agent |
+| `GET` | `/` | Greeting |
+| `GET` | `/health` | `SELECT 1` + boss queue check + Pi ready |
+| `POST` | `/queue/test` | Send `demo-ping`, worker writes `system_events` |
+| `POST` | `/pi/test` | Ephemeral Pi session, expects PONG (503 if not ready) |
+| `POST` | `/workflows` | Create run (`rawText` trim, 10k cap), enqueue extractor, 201 `{id}` |
+| `GET` | `/workflows/:id` | Run + steps + versions (versions newest-first) |
+| `POST` | `/workflows/:id/planner/regenerate` | Needs `WAITING_FOR_HUMAN`, body `{feedback?, baseVersion?}` |
+| `POST` | `/workflows/:id/planner/approve` | Needs `WAITING_FOR_HUMAN`, body `{version}`, enqueues writer |
+| `GET` | `/events?workflowRunId&type&limit≤200` | Event list, oldest-first |
+| `GET` | `/events/stream?workflowRunId&afterId` | SSE: `workflow-event` every 1s poll + `workflow-done`, 15s heartbeat, Last-Event-ID |
