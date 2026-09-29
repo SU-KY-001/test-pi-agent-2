@@ -28,6 +28,8 @@ export const STEP_TYPES = [
 
 export type StepType = (typeof STEP_TYPES)[number];
 
+export const DEMO_PING_QUEUE = "demo-ping";
+
 export const WORKFLOW_QUEUES = {
   EXTRACTOR: "agent.extract-product",
   PLANNER: "agent.plan-content",
@@ -45,3 +47,6 @@ export interface AgentJobPayload {
 export const MAX_AGENT_RETRY_COUNT = 1;
 export const MAX_QUEUE_RETRY_COUNT = 3;
 export const MAX_RAW_PRODUCT_TEXT_LENGTH = 10000;
+export const SHUTDOWN_DRAIN_TIMEOUT_MS = 3000;
+export const SHUTDOWN_POLL_INTERVAL_MS = 50;
+export const PI_MODEL_REFRESH_TIMEOUT_MS = 1500;

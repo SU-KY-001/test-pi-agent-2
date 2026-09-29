@@ -8,7 +8,7 @@ import {
   type NewWorkflowRun,
   type NewWorkflowStep,
 } from "@repo/db";
-import type { StepStatus, StepType } from "./workflow.types";
+import type { StepStatus, StepType, WorkflowStatus } from "./workflow.types";
 
 export async function createWorkflowRun(rawProductText: string) {
   const inserted = await db
@@ -31,7 +31,7 @@ export async function getWorkflowRun(id: number) {
 
 export async function updateWorkflowRun(
   id: number,
-  patch: { status?: string; currentStep?: string | null; completedAt?: Date | null }
+  patch: { status?: WorkflowStatus; currentStep?: StepType | null; completedAt?: Date | null }
 ) {
   await db
     .update(workflowRuns)

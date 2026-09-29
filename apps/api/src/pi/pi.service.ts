@@ -1,5 +1,6 @@
 import { ModelRuntime, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import { env } from "../config/env";
+import { PI_MODEL_REFRESH_TIMEOUT_MS } from "../workflow/workflow.types";
 
 export interface AssistantTextBlock {
   type?: string;
@@ -64,7 +65,7 @@ export class PiService {
       this.modelRuntime = await ModelRuntime.create({
         refreshOnCreate: false,
         allowModelNetwork: false,
-        modelRefreshTimeoutMs: 1500,
+        modelRefreshTimeoutMs: PI_MODEL_REFRESH_TIMEOUT_MS,
       });
       if (env.OPENCODE_API_KEY) {
         this.modelRuntime.setRuntimeApiKey("opencode-go", env.OPENCODE_API_KEY);

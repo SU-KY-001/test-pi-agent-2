@@ -1,6 +1,6 @@
 import { db, systemEvents } from "@repo/db";
 import { boss } from "./boss";
-import { WORKFLOW_QUEUES, type AgentJobPayload } from "../workflow/workflow.types";
+import { DEMO_PING_QUEUE, WORKFLOW_QUEUES, type AgentJobPayload } from "../workflow/workflow.types";
 import { handleExtractorJob } from "./jobs/extractor.job";
 import { handlePlannerJob } from "./jobs/planner.job";
 import { handleWriterJob } from "./jobs/writer.job";
@@ -23,7 +23,7 @@ function parseAgentPayload(job: QueueJob | undefined): AgentJobPayload | null {
 }
 
 export async function registerWorkers(): Promise<void> {
-  await boss.work("demo-ping", async (jobs: QueueJob[]) => {
+  await boss.work(DEMO_PING_QUEUE, async (jobs: QueueJob[]) => {
     const job = jobs[0];
     if (!job) return { success: false };
     console.log(`[Queue Worker] Processing job ${job.id}:`, job.data);

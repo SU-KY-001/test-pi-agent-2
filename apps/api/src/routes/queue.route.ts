@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { boss } from "../queue/boss";
+import { DEMO_PING_QUEUE } from "../workflow/workflow.types";
 import { QueueTestResponseSchema } from "@repo/contracts";
 
 export const queueRoute = new Hono();
 
 queueRoute.post("/test", async (c) => {
   try {
-    const jobId = await boss.send("demo-ping", {
+    const jobId = await boss.send(DEMO_PING_QUEUE, {
       message: "hello queue",
       timestamp: new Date().toISOString(),
     });

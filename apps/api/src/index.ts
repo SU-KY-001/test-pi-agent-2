@@ -9,6 +9,7 @@ import { healthRoute } from "./routes/health.route";
 import { queueRoute } from "./routes/queue.route";
 import { piRoute } from "./routes/pi.route";
 import { workflowRoute } from "./routes/workflow.route";
+import { SHUTDOWN_DRAIN_TIMEOUT_MS, SHUTDOWN_POLL_INTERVAL_MS } from "./workflow/workflow.types";
 
 console.log("🚀 Starting Su Ky Agent Demo API...");
 
@@ -121,9 +122,9 @@ async function gracefulShutdown(signal: string) {
     console.log("Stopping HTTP server listener (rejecting new connections)...");
     server.stop(false);
 
-    const drainDeadline = Date.now() + 3000;
+    const drainDeadline = Date.now() + SHUTDOWN_DRAIN_TIMEOUT_MS;
     while (activeRequests > 0 && Date.now() < drainDeadline) {
-      await Bun.sleep(50);
+      await Bun.sleep(SHUTDOWN_POLL_INTERVAL_MS);
     }
 
     if (activeRequests > 0) {
