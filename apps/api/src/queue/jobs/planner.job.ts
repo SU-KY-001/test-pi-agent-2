@@ -14,6 +14,7 @@ import {
   updateWorkflowStep,
 } from "../../workflow/workflow.repository";
 import { loadLatestStepOutput } from "../../workflow/workflow.service";
+import { log } from "../../config/logger";
 import type { AgentJobPayload } from "../../workflow/workflow.types";
 
 export async function handlePlannerJob(payload: AgentJobPayload): Promise<void> {
@@ -30,10 +31,12 @@ export async function handlePlannerJob(payload: AgentJobPayload): Promise<void> 
     type: payload.feedback ? "planner.regenerate.started" : "planner.started",
     message: `Planner started for workflow ${run.id}`,
   });
+  const isRegenerate = payload.feedback != null && payload.baseVersion != null;
+  const jobLog = log.child({ scope: "agent-job", workflowRunId: run.id, step: "PLANNER" });
+  jobLog.info({ isRegenerate, feedback: payload.feedback, baseVersion: payload.baseVersion }, isRegenerate ? "Planner regenerate job started" : "Planner job started");
 
   try {
     const productData = await loadLatestStepOutput(run.id, "EXTRACTOR");
-    const isRegenerate = payload.feedback != null && payload.baseVersion != null;
 
     if (isRegenerate) {
       const base = await getStepVersion(step.id, payload.baseVersion as number);
@@ -69,7 +72,9 @@ export async function handlePlannerJob(payload: AgentJobPayload): Promise<void> 
     const nextVersion = (step.currentVersion ?? 0) + 1;
     await updateWorkflowStep(step.id, { status: "WAITING_FOR_HUMAN", currentVersion: nextVersion });
     await updateWorkflowRun(run.id, { status: "WAITING_FOR_HUMAN", currentStep: "PLANNER" });
+    jobLog.info({ version: nextVersion, isRegenerate }, "Planner job succeeded, waiting for human approval");
   } catch (err) {
+    jobLog.error({ err, isRegenerate }, "Planner job failed");
     if (err instanceof AgentValidationError) {
       await updateWorkflowStep(step.id, { status: "FAILED", errorMessage: err.message });
       await updateWorkflowRun(run.id, { status: "FAILED", currentStep: "PLANNER" });

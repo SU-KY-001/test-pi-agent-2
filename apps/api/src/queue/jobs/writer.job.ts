@@ -1,7 +1,10 @@
-import { runWriterAgent } from "../../agents/writer.agent";
+import { AdvertisementSchema } from "@repo/contracts";
+import { runWriterAgent, runWriterRegenerateAgent } from "../../agents/writer.agent";
 import { AgentValidationError } from "../../agents/agent-runner";
+import { log } from "../../config/logger";
 import {
   createWorkflowStep,
+  getStepVersion,
   getWorkflowRun,
   getWorkflowStep,
   insertStepVersion,
@@ -13,8 +16,7 @@ import {
   loadApprovedPlannerOutput,
   loadLatestStepOutput,
 } from "../../workflow/workflow.service";
-import { MAX_QUEUE_RETRY_COUNT, WORKFLOW_QUEUES, type AgentJobPayload } from "../../workflow/workflow.types";
-import { boss } from "../boss";
+import type { AgentJobPayload } from "../../workflow/workflow.types";
 
 export async function handleWriterJob(payload: AgentJobPayload): Promise<void> {
   const run = await getWorkflowRun(payload.workflowRunId);
@@ -25,29 +27,113 @@ export async function handleWriterJob(payload: AgentJobPayload): Promise<void> {
   else await updateWorkflowStep(step.id, { status: "RUNNING", errorMessage: null });
 
   await updateWorkflowRun(run.id, { status: "RUNNING", currentStep: "WRITER" });
-  await logEvent({ workflowRunId: run.id, type: "writer.started", message: `Writer started for workflow ${run.id}` });
+  const isRegenerate = payload.feedback != null && payload.baseVersion != null;
+
+  await logEvent({
+    workflowRunId: run.id,
+    type: isRegenerate ? "writer.regenerate.started" : "writer.started",
+    message: isRegenerate
+      ? `Writer regenerate started for workflow ${run.id}`
+      : `Writer started for workflow ${run.id}`,
+  });
+
+  const jobLog = log.child({ scope: "agent-job", workflowRunId: run.id, step: "WRITER" });
+  jobLog.info({ isRegenerate, feedback: payload.feedback, baseVersion: payload.baseVersion }, "Writer job started");
 
   try {
     const productData = await loadLatestStepOutput(run.id, "EXTRACTOR");
-    // Writer proves it uses the approved version: load approved plan, embed version in input.
     const approved = await loadApprovedPlannerOutput(run.id);
-    const output = await runWriterAgent(productData, approved.plan, approved.version, run.id);
-    await insertStepVersion({
-      workflowStepId: step.id,
-      version: 1,
-      inputJson: {
+
+    let nextVersion: number;
+
+    if (isRegenerate) {
+      const base = await getStepVersion(step.id, payload.baseVersion as number);
+      if (!base) throw new Error(`Writer v${payload.baseVersion} not found`);
+      const previousAd = AdvertisementSchema.parse(base.outputJson);
+      nextVersion = (step.currentVersion ?? 0) + 1;
+
+      const output = await runWriterRegenerateAgent(
         productData,
-        approvedPlan: approved.plan,
-        approvedVersion: approved.version,
-      },
-      outputJson: output,
-      validationStatus: "valid",
+        approved.plan,
+        approved.version,
+        previousAd,
+        payload.feedback as string,
+        run.id,
+        step.incomingGuidance
+      );
+
+      await insertStepVersion({
+        workflowStepId: step.id,
+        version: nextVersion,
+        inputJson: {
+          productData,
+          approvedPlan: approved.plan,
+          approvedVersion: approved.version,
+          previousAd,
+          feedback: payload.feedback,
+          incomingGuidance: step.incomingGuidance ?? null,
+        },
+        outputJson: output,
+        humanFeedback: payload.feedback,
+        validationStatus: "valid",
+      });
+
+      await logEvent({
+        workflowRunId: run.id,
+        type: "writer.regenerated",
+        message: `Writer regenerated v${nextVersion} for workflow ${run.id}`,
+      });
+    } else {
+      nextVersion = 1;
+      const output = await runWriterAgent(
+        productData,
+        approved.plan,
+        approved.version,
+        run.id,
+        step.incomingGuidance
+      );
+
+      await insertStepVersion({
+        workflowStepId: step.id,
+        version: nextVersion,
+        inputJson: {
+          productData,
+          approvedPlan: approved.plan,
+          approvedVersion: approved.version,
+          incomingGuidance: step.incomingGuidance ?? null,
+        },
+        outputJson: output,
+        validationStatus: "valid",
+      });
+
+      await logEvent({
+        workflowRunId: run.id,
+        type: "writer.completed",
+        message: `Writer v1 completed for workflow ${run.id} (planner v${approved.version})`,
+      });
+    }
+
+    // HITL Review Gate: Step and Workflow wait for human review!
+    await updateWorkflowStep(step.id, {
+      status: "WAITING_FOR_HUMAN",
+      currentVersion: nextVersion,
     });
-    await updateWorkflowStep(step.id, { status: "COMPLETED", currentVersion: 1 });
-    await logEvent({ workflowRunId: run.id, type: "writer.completed", message: `Writer v1 completed for workflow ${run.id} (planner v${approved.version})` });
+    await updateWorkflowRun(run.id, {
+      status: "WAITING_FOR_HUMAN",
+      currentStep: "WRITER",
+    });
+
+    jobLog.info(
+      { version: nextVersion, isRegenerate },
+      "Writer job succeeded, waiting for human approval"
+    );
   } catch (err) {
+    jobLog.error({ err, isRegenerate }, "Writer job failed");
     const message = err instanceof Error ? err.message : String(err);
-    if (err instanceof AgentValidationError || /no approved version|not found|no completed version/i.test(message)) {
+    if (
+      err instanceof AgentValidationError ||
+      /no approved version|not found|no completed version/i.test(message)
+    ) {
       await updateWorkflowStep(step.id, { status: "FAILED", errorMessage: message });
       await updateWorkflowRun(run.id, { status: "FAILED", currentStep: "WRITER" });
       await logEvent({ workflowRunId: run.id, type: "writer.failed", message });
@@ -56,22 +142,6 @@ export async function handleWriterJob(payload: AgentJobPayload): Promise<void> {
     await updateWorkflowStep(step.id, { status: "FAILED", errorMessage: message });
     await updateWorkflowRun(run.id, { status: "FAILED", currentStep: "WRITER" });
     await logEvent({ workflowRunId: run.id, type: "writer.failed", message });
-    throw err;
-  }
-
-  // Why: step is COMPLETED here; enqueue failure must not flip it to FAILED.
-  const reviewer = await getWorkflowStep(run.id, "REVIEWER");
-  if (!reviewer) await createWorkflowStep(run.id, "REVIEWER", "QUEUED");
-  else await updateWorkflowStep(reviewer.id, { status: "QUEUED", errorMessage: null });
-  await updateWorkflowRun(run.id, { status: "RUNNING", currentStep: "REVIEWER" });
-  try {
-    await boss.send(
-      WORKFLOW_QUEUES.REVIEWER,
-      { workflowRunId: run.id } satisfies AgentJobPayload,
-      { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
-    );
-  } catch (err) {
-    await logEvent({ workflowRunId: run.id, type: "writer.enqueue.failed", message: String(err) });
     throw err;
   }
 }

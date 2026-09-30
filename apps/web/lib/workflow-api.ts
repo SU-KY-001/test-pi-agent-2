@@ -83,19 +83,58 @@ export function subscribeWorkflowEvents(
 }
 
 export async function regeneratePlanner(id: number, feedback: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workflows/${id}/planner/regenerate`, {
+  return rerunStep(id, "PLANNER", feedback);
+}
+
+export async function approvePlanner(id: number, version: number): Promise<void> {
+  return continueStep(id, "PLANNER", version);
+}
+
+export async function rerunStep(
+  id: number,
+  stepType: string,
+  feedback: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/rerun`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ feedback }),
   });
-  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), "Regenerate planner");
+  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), `Rerun step ${stepType}`);
 }
 
-export async function approvePlanner(id: number, version: number): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workflows/${id}/planner/approve`, {
+export async function continueStep(
+  id: number,
+  stepType: string,
+  version: number,
+  incomingGuidance?: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/continue`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version }),
+    body: JSON.stringify({ version, incomingGuidance }),
   });
-  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), "Approve planner");
+  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), `Continue step ${stepType}`);
+}
+
+export async function directEditStep(
+  id: number,
+  stepType: string,
+  baseVersion: number,
+  editedOutputJson: unknown,
+  note?: string
+): Promise<{ newVersion: number; output: unknown }> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/direct-edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ baseVersion, editedOutputJson, note }),
+  });
+  return parseOrThrow(
+    res,
+    (d) => ({
+      success: typeof d === "object" && d !== null && "ok" in d,
+      data: d as { newVersion: number; output: unknown },
+    }),
+    `Direct edit step ${stepType}`
+  );
 }

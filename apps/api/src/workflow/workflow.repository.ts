@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   db,
   stepVersions,
@@ -77,12 +77,53 @@ export async function updateWorkflowStep(
     currentVersion?: number | null;
     approvedVersion?: number | null;
     errorMessage?: string | null;
+    incomingGuidance?: string | null;
   }
 ) {
   await db
     .update(workflowSteps)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(workflowSteps.id, id));
+}
+
+export async function atomicTransitionStepStatus(
+  stepId: number,
+  expectedStatus: StepStatus,
+  expectedVersion: number,
+  patch: {
+    status: StepStatus;
+    approvedVersion?: number | null;
+    incomingGuidance?: string | null;
+  }
+) {
+  const rows = await db
+    .update(workflowSteps)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(
+      and(
+        eq(workflowSteps.id, stepId),
+        eq(workflowSteps.status, expectedStatus),
+        eq(workflowSteps.currentVersion, expectedVersion)
+      )
+    )
+    .returning();
+  return rows[0] ?? null;
+}
+
+export async function setDownstreamStepsStale(
+  workflowRunId: number,
+  downstreamTypes: StepType[]
+) {
+  if (downstreamTypes.length === 0) return;
+  await db
+    .update(workflowSteps)
+    .set({ status: "STALE", updatedAt: new Date() })
+    .where(
+      and(
+        eq(workflowSteps.workflowRunId, workflowRunId),
+        inArray(workflowSteps.stepType, downstreamTypes)
+      )
+    );
 }
 
 export async function getStepVersions(workflowStepId: number) {

@@ -1,5 +1,6 @@
 import { runExtractorAgent } from "../../agents/extractor.agent";
 import { AgentValidationError } from "../../agents/agent-runner";
+import { log } from "../../config/logger";
 import {
   createWorkflowStep,
   getWorkflowRun,
@@ -22,6 +23,8 @@ export async function handleExtractorJob(payload: AgentJobPayload): Promise<void
 
   await updateWorkflowRun(run.id, { status: "RUNNING", currentStep: "EXTRACTOR" });
   await logEvent({ workflowRunId: run.id, type: "extractor.started", message: `Extractor started for workflow ${run.id}` });
+  const jobLog = log.child({ scope: "agent-job", workflowRunId: run.id, step: "EXTRACTOR" });
+  jobLog.info({ rawProductTextLength: run.rawProductText.length }, "Extractor job started");
 
   try {
     const output = await runExtractorAgent(run.rawProductText, run.id);
@@ -34,7 +37,9 @@ export async function handleExtractorJob(payload: AgentJobPayload): Promise<void
     });
     await updateWorkflowStep(step.id, { status: "COMPLETED", currentVersion: 1 });
     await logEvent({ workflowRunId: run.id, type: "extractor.completed", message: `Extractor v1 completed for workflow ${run.id}` });
+    jobLog.info({ version: 1 }, "Extractor job completed successfully");
   } catch (err) {
+    jobLog.error({ err }, "Extractor job failed");
     // Business/schema errors fail fast; infra errors throw so pg-boss retries.
     if (err instanceof AgentValidationError) {
       await updateWorkflowStep(step.id, { status: "FAILED", errorMessage: err.message });
@@ -61,7 +66,9 @@ export async function handleExtractorJob(payload: AgentJobPayload): Promise<void
       { workflowRunId: run.id } satisfies AgentJobPayload,
       { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
     );
+    jobLog.info({ nextStep: "PLANNER" }, "Enqueued next step: PLANNER");
   } catch (err) {
+    jobLog.error({ err }, "Failed to enqueue next step: PLANNER");
     await logEvent({ workflowRunId: run.id, type: "extractor.enqueue.failed", message: String(err) });
     throw err;
   }

@@ -1,5 +1,6 @@
 import { runReviewerAgent } from "../../agents/reviewer.agent";
 import { AgentValidationError } from "../../agents/agent-runner";
+import { log } from "../../config/logger";
 import {
   getWorkflowRun,
   getWorkflowStep,
@@ -8,7 +9,10 @@ import {
   updateWorkflowRun,
   updateWorkflowStep,
 } from "../../workflow/workflow.repository";
-import { loadLatestStepOutput } from "../../workflow/workflow.service";
+import {
+  loadApprovedWriterOutput,
+  loadLatestStepOutput,
+} from "../../workflow/workflow.service";
 import type { AgentJobPayload } from "../../workflow/workflow.types";
 
 export async function handleReviewerJob(payload: AgentJobPayload): Promise<void> {
@@ -21,15 +25,27 @@ export async function handleReviewerJob(payload: AgentJobPayload): Promise<void>
   await updateWorkflowStep(step.id, { status: "RUNNING", errorMessage: null });
   await updateWorkflowRun(run.id, { status: "RUNNING", currentStep: "REVIEWER" });
   await logEvent({ workflowRunId: run.id, type: "reviewer.started", message: `Reviewer started for workflow ${run.id}` });
+  const jobLog = log.child({ scope: "agent-job", workflowRunId: run.id, step: "REVIEWER" });
+  jobLog.info("Reviewer job started");
 
   try {
     const productData = await loadLatestStepOutput(run.id, "EXTRACTOR");
-    const advertisement = await loadLatestStepOutput(run.id, "WRITER");
-    const output = await runReviewerAgent(productData, advertisement, run.id);
+    const approvedWriter = await loadApprovedWriterOutput(run.id);
+    const output = await runReviewerAgent(
+      productData,
+      approvedWriter.advertisement,
+      run.id,
+      step.incomingGuidance
+    );
     await insertStepVersion({
       workflowStepId: step.id,
       version: 1,
-      inputJson: { productData, advertisement },
+      inputJson: {
+        productData,
+        approvedAdvertisement: approvedWriter.advertisement,
+        approvedWriterVersion: approvedWriter.version,
+        incomingGuidance: step.incomingGuidance ?? null,
+      },
       outputJson: output,
       validationStatus: "valid",
     });
@@ -43,7 +59,9 @@ export async function handleReviewerJob(payload: AgentJobPayload): Promise<void>
       metadataJson: { passed: output.passed },
     });
     await logEvent({ workflowRunId: run.id, type: "workflow.completed", message: `Workflow ${run.id} completed` });
+    jobLog.info({ passed: output.passed }, "Reviewer job completed successfully, workflow finished");
   } catch (err) {
+    jobLog.error({ err }, "Reviewer job failed");
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof AgentValidationError || /not found|no completed version|missing/i.test(message)) {
       await updateWorkflowStep(step.id, { status: "FAILED", errorMessage: message });

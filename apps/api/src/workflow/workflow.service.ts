@@ -45,6 +45,23 @@ export async function loadApprovedPlannerOutput(
   };
 }
 
+/** Why: Reviewer must only run on human-approved Writer output, never latest draft. */
+export async function loadApprovedWriterOutput(
+  workflowRunId: number
+): Promise<{ stepId: number; version: number; advertisement: Advertisement }> {
+  const writer = await getWorkflowStep(workflowRunId, "WRITER");
+  if (!writer || writer.approvedVersion == null) {
+    throw new Error("Writer has no approved version");
+  }
+  const row = await getStepVersion(writer.id, writer.approvedVersion);
+  if (!row) throw new Error(`Approved Writer v${writer.approvedVersion} not found`);
+  return {
+    stepId: writer.id,
+    version: writer.approvedVersion,
+    advertisement: AdvertisementSchema.parse(row.outputJson),
+  };
+}
+
 export async function loadLatestStepOutput(
   workflowRunId: number,
   stepType: "EXTRACTOR"

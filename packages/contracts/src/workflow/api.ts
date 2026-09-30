@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ReviewPolicySchema } from "./review-policy";
 
 export const WorkflowStatusSchema = z.enum([
   "PENDING",
@@ -15,6 +16,7 @@ export const StepStatusSchema = z.enum([
   "WAITING_FOR_HUMAN",
   "COMPLETED",
   "FAILED",
+  "STALE",
 ]);
 
 export const StepTypeSchema = z.enum([
@@ -66,9 +68,11 @@ export type StepVersion = z.infer<typeof StepVersionSchema>;
 export const WorkflowStepSchema = z.object({
   type: StepTypeSchema,
   status: StepStatusSchema,
+  reviewPolicy: ReviewPolicySchema,
   currentVersion: z.number().int().positive().nullable(),
   approvedVersion: z.number().int().positive().nullable(),
   errorMessage: z.string().nullable(),
+  incomingGuidance: z.string().nullable().optional(),
   versions: z.array(StepVersionSchema),
 });
 

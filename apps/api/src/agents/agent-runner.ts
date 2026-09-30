@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   DefaultResourceLoader,
   SessionManager,
@@ -42,10 +43,14 @@ function readRoleOf(message: unknown): string | undefined {
   return typeof message.role === "string" ? message.role : undefined;
 }
 
-function readContentOf(message: unknown): unknown {
+function readContentOf(message: unknown): string | AgentTextBlock[] | undefined {
   if (!message || typeof message !== "object") return undefined;
   if (!("content" in message)) return undefined;
-  return message.content;
+  const content = (message as AgentMessage).content;
+  if (typeof content === "string" || Array.isArray(content)) {
+    return content;
+  }
+  return undefined;
 }
 
 function getAssistantText(messages: unknown[]): string {
@@ -110,6 +115,12 @@ export async function runStructuredAgent<T>(
   const settingsManager = SettingsManager.inMemory();
   settingsManager.setDefaultThinkingLevel(env.PI_THINKING_LEVEL);
 
+  const jsonSchema = zodToJsonSchema(schema, { target: "openAi" });
+  delete (jsonSchema as Record<string, unknown>)["$schema"];
+  const jsonSchemaStr = JSON.stringify(jsonSchema, null, 2);
+
+  const fullSystemPrompt = `${systemPrompt}\n\n<response_format>\nYou MUST respond with valid JSON matching the schema below. Do not include any markdown fences or conversational text outside the JSON.\n<schema>\n${jsonSchemaStr}\n</schema>\n</response_format>`;
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: process.cwd(),
     agentDir: process.cwd(),
@@ -119,7 +130,7 @@ export async function runStructuredAgent<T>(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPrompt,
+    systemPrompt: fullSystemPrompt,
   });
   await resourceLoader.reload();
 
@@ -148,7 +159,7 @@ export async function runStructuredAgent<T>(
   const runStartedAt = Date.now();
   agentLog.info(
     {
-      systemPromptLength: systemPrompt.length,
+      systemPromptLength: fullSystemPrompt.length,
       userPromptLength: userPrompt.length,
       userPromptSnippet: userPrompt.slice(0, 500),
     },
@@ -168,7 +179,7 @@ export async function runStructuredAgent<T>(
         if (attempt >= MAX_AGENT_RETRY_COUNT) {
           throw new AgentValidationError("Agent returned invalid JSON", "Response is not valid JSON");
         }
-        await session.prompt(buildSchemaRetryPrompt("Response is not valid JSON"));
+        await session.prompt(buildSchemaRetryPrompt("Response is not valid JSON", jsonSchemaStr));
         raw = getAssistantText(session.messages as unknown[]);
         continue;
       }
@@ -199,7 +210,7 @@ export async function runStructuredAgent<T>(
           JSON.stringify(validated.error.issues)
         );
       }
-      await session.prompt(buildSchemaRetryPrompt(JSON.stringify(validated.error.issues)));
+      await session.prompt(buildSchemaRetryPrompt(JSON.stringify(validated.error.issues), jsonSchemaStr));
       raw = getAssistantText(session.messages as unknown[]);
     }
     throw new AgentValidationError("Agent failed after retry", "No valid output produced");

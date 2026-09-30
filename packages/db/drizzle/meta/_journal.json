@@ -15,6 +15,13 @@
       "when": 1790704974881,
       "tag": "0001_even_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790750000000,
+      "tag": "0002_add_incoming_guidance",
+      "breakpoints": true
     }
   ]
 }

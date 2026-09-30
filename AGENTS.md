@@ -185,6 +185,23 @@ Verification is performed via static analysis, runtime contracts, and active sub
    - `POST /workflows` → `GET /workflows/:id` → planner approve/regenerate → writer/reviewer → `COMPLETED`; `GET /events` + SSE stream for trace.
 4. **Interactive Dashboard**: Manual verification via `localhost:3000` (create, version tabs, feedback, approve, TracePanel).
 
+---
+
+## Troubleshooting & Common Issues
+
+### PGlite Migration Failure / WASM Abort (`invalid checkpoint record`)
+- **Symptom**: `FATAL: Failed to run migrations` with `RuntimeError: Aborted(). Build with -sASSERTIONS for more info.` at boot lifecycle step [4/9] (`Running database migrations...`).
+- **Root Cause**: Unclean shutdown / abrupt termination during a WAL write corrupted the checkpoint record (`PANIC: could not locate a valid checkpoint record`).
+- **Fix**: Remove the local ephemeral database folder and restart:
+  ```bash
+  # Bash / zsh
+  rm -rf packages/db/data/pgdata
+
+  # PowerShell
+  Remove-Item -Recurse -Force packages/db/data/pgdata
+  ```
+  Then run `bun run dev`. PGlite will re-initialize a clean database and apply migrations automatically.
+
 <!-- BEGIN:turborepo-agent-rules -->
 
 # This is NOT the Turborepo you know

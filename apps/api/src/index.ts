@@ -85,11 +85,30 @@ app.use("*", async (c, next) => {
     await next();
   } finally {
     activeRequests--;
-    log.info(
-      { requestId, method: c.req.method, path: c.req.path, status: c.res.status, durationMs: Date.now() - startedAt },
-      "http request"
-    );
+    const status = c.res.status;
+    const durationMs = Date.now() - startedAt;
+    if (status >= 500) {
+      log.error(
+        { scope: "http", requestId, method: c.req.method, path: c.req.path, status, durationMs },
+        "http request server error"
+      );
+    } else if (status >= 400) {
+      log.warn(
+        { scope: "http", requestId, method: c.req.method, path: c.req.path, status, durationMs },
+        "http request client error"
+      );
+    } else {
+      log.info(
+        { scope: "http", requestId, method: c.req.method, path: c.req.path, status, durationMs },
+        "http request succeeded"
+      );
+    }
   }
+});
+
+app.onError((err, c) => {
+  log.error({ scope: "http", err, path: c.req.path, method: c.req.method }, "Unhandled server error");
+  return c.json({ error: "Internal Server Error" }, 500);
 });
 
 // CORS middleware

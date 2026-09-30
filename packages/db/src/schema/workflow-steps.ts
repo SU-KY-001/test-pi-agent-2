@@ -11,6 +11,7 @@ export const workflowSteps = pgTable("workflow_steps", {
   currentVersion: integer("current_version"),
   approvedVersion: integer("approved_version"),
   errorMessage: text("error_message"),
+  incomingGuidance: text("incoming_guidance"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

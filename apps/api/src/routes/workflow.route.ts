@@ -1,24 +1,33 @@
 import { Hono } from "hono";
+import { log } from "../config/logger";
 import {
   ApprovePlannerRequestSchema,
+  ContinueStepRequestSchema,
   CreateWorkflowRequestSchema,
   CreateWorkflowResponseSchema,
+  DirectEditStepRequestSchema,
   GetWorkflowResponseSchema,
   RegeneratePlannerRequestSchema,
+  RerunStepRequestSchema,
+  STEP_REVIEW_POLICY,
+  StepTypeSchema,
+  type StepType,
 } from "@repo/contracts";
 import { boss } from "../queue/boss";
 import {
   createWorkflowRun,
   createWorkflowStep,
-  getStepVersion,
   getStepVersions,
   getWorkflowRun,
-  getWorkflowStep,
   listWorkflowSteps,
   logEvent,
   updateWorkflowRun,
-  updateWorkflowStep,
 } from "../workflow/workflow.repository";
+import {
+  continueStepWithGuidance,
+  directEditStep,
+  rerunStepWithFeedback,
+} from "../workflow/workflow-transition.service";
 import {
   MAX_QUEUE_RETRY_COUNT,
   MAX_RAW_PRODUCT_TEXT_LENGTH,
@@ -48,6 +57,7 @@ workflowRoute.post("/", async (c) => {
     { workflowRunId: run.id } satisfies AgentJobPayload,
     { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
   );
+  log.info({ scope: "workflow", workflowRunId: run.id }, "Workflow created, EXTRACTOR enqueued");
 
   const response = CreateWorkflowResponseSchema.safeParse({ id: run.id });
   if (!response.success) return c.json({ error: "Invalid response" }, 500);
@@ -67,9 +77,11 @@ workflowRoute.get("/:id", async (c) => {
       return {
         type: s.stepType,
         status: s.status,
+        reviewPolicy: STEP_REVIEW_POLICY[s.stepType as StepType] ?? "AUTO_CONTINUE",
         currentVersion: s.currentVersion,
         approvedVersion: s.approvedVersion,
         errorMessage: s.errorMessage,
+        incomingGuidance: s.incomingGuidance ?? null,
         versions: versions.map((v) => ({
           version: v.version,
           inputJson: v.inputJson,
@@ -94,6 +106,89 @@ workflowRoute.get("/:id", async (c) => {
   return c.json(parsed.data);
 });
 
+workflowRoute.post("/:id/steps/:type/rerun", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Invalid workflow id" }, 400);
+
+  const rawType = c.req.param("type").toUpperCase();
+  const parsedType = StepTypeSchema.safeParse(rawType);
+  if (!parsedType.success) {
+    return c.json({ error: `Invalid step type: ${rawType}` }, 400);
+  }
+
+  const body: unknown = await c.req.json().catch(() => null);
+  const parsedBody = RerunStepRequestSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json({ error: "Invalid request", details: parsedBody.error.format() }, 400);
+  }
+
+  const result = await rerunStepWithFeedback(id, parsedType.data, parsedBody.data.feedback);
+  if (!result.success) {
+    return c.json({ error: result.error, details: result.details }, result.status);
+  }
+
+  return c.json({ ok: true, stepType: parsedType.data });
+});
+
+workflowRoute.post("/:id/steps/:type/continue", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Invalid workflow id" }, 400);
+
+  const rawType = c.req.param("type").toUpperCase();
+  const parsedType = StepTypeSchema.safeParse(rawType);
+  if (!parsedType.success) {
+    return c.json({ error: `Invalid step type: ${rawType}` }, 400);
+  }
+
+  const body: unknown = await c.req.json().catch(() => null);
+  const parsedBody = ContinueStepRequestSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json({ error: "Invalid request", details: parsedBody.error.format() }, 400);
+  }
+
+  const result = await continueStepWithGuidance(
+    id,
+    parsedType.data,
+    parsedBody.data.version,
+    parsedBody.data.incomingGuidance
+  );
+  if (!result.success) {
+    return c.json({ error: result.error, details: result.details }, result.status);
+  }
+
+  return c.json({ ok: true, stepType: parsedType.data, ...result.data });
+});
+
+workflowRoute.post("/:id/steps/:type/direct-edit", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Invalid workflow id" }, 400);
+
+  const rawType = c.req.param("type").toUpperCase();
+  const parsedType = StepTypeSchema.safeParse(rawType);
+  if (!parsedType.success) {
+    return c.json({ error: `Invalid step type: ${rawType}` }, 400);
+  }
+
+  const body: unknown = await c.req.json().catch(() => null);
+  const parsedBody = DirectEditStepRequestSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json({ error: "Invalid request", details: parsedBody.error.format() }, 400);
+  }
+
+  const result = await directEditStep(
+    id,
+    parsedType.data,
+    parsedBody.data.baseVersion,
+    parsedBody.data.editedOutputJson,
+    parsedBody.data.note
+  );
+  if (!result.success) {
+    return c.json({ error: result.error, details: result.details }, result.status);
+  }
+
+  return c.json({ ok: true, stepType: parsedType.data, ...result.data });
+});
+
 workflowRoute.post("/:id/planner/regenerate", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Invalid workflow id" }, 400);
@@ -103,34 +198,12 @@ workflowRoute.post("/:id/planner/regenerate", async (c) => {
     return c.json({ error: "Invalid request", details: parsedBody.error.format() }, 400);
   }
 
-  const run = await getWorkflowRun(id);
-  if (!run) return c.json({ error: "Workflow not found" }, 404);
-  if (run.status !== "WAITING_FOR_HUMAN") {
-    return c.json({ error: `Workflow must be WAITING_FOR_HUMAN (current: ${run.status})` }, 409);
-  }
-  const planner = await getWorkflowStep(id, "PLANNER");
-  if (!planner || planner.currentVersion == null) {
-    return c.json({ error: "Planner has no completed version to regenerate from" }, 409);
+  const result = await rerunStepWithFeedback(id, "PLANNER", parsedBody.data.feedback);
+  if (!result.success) {
+    return c.json({ error: result.error, details: result.details }, result.status);
   }
 
-  await updateWorkflowStep(planner.id, { status: "QUEUED", errorMessage: null });
-  await updateWorkflowRun(id, { status: "RUNNING", currentStep: "PLANNER" });
-  await logEvent({
-    workflowRunId: id,
-    type: "planner.regenerate.requested",
-    message: `Planner regenerate requested for workflow ${id}`,
-    metadataJson: { feedback: parsedBody.data.feedback, baseVersion: planner.currentVersion },
-  });
-  await boss.send(
-    WORKFLOW_QUEUES.PLANNER,
-    {
-      workflowRunId: id,
-      feedback: parsedBody.data.feedback,
-      baseVersion: planner.currentVersion,
-    } satisfies AgentJobPayload,
-    { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
-  );
-  return c.json({ ok: true, baseVersion: planner.currentVersion });
+  return c.json({ ok: true, stepType: "PLANNER" });
 });
 
 workflowRoute.post("/:id/planner/approve", async (c) => {
@@ -142,37 +215,10 @@ workflowRoute.post("/:id/planner/approve", async (c) => {
     return c.json({ error: "Invalid request", details: parsedBody.error.format() }, 400);
   }
 
-  const run = await getWorkflowRun(id);
-  if (!run) return c.json({ error: "Workflow not found" }, 404);
-  if (run.status !== "WAITING_FOR_HUMAN") {
-    return c.json({ error: `Workflow must be WAITING_FOR_HUMAN (current: ${run.status})` }, 409);
-  }
-  const planner = await getWorkflowStep(id, "PLANNER");
-  if (!planner) return c.json({ error: "Planner step not found" }, 409);
-  const versionRow = await getStepVersion(planner.id, parsedBody.data.version);
-  if (!versionRow) {
-    return c.json({ error: `Planner v${parsedBody.data.version} does not exist` }, 404);
+  const result = await continueStepWithGuidance(id, "PLANNER", parsedBody.data.version);
+  if (!result.success) {
+    return c.json({ error: result.error, details: result.details }, result.status);
   }
 
-  await updateWorkflowStep(planner.id, {
-    status: "COMPLETED",
-    approvedVersion: parsedBody.data.version,
-  });
-  await logEvent({
-    workflowRunId: id,
-    type: "planner.approved",
-    message: `Planner v${parsedBody.data.version} approved for workflow ${id}`,
-    metadataJson: { approvedVersion: parsedBody.data.version },
-  });
-
-  const writer = await getWorkflowStep(id, "WRITER");
-  if (!writer) await createWorkflowStep(id, "WRITER", "QUEUED");
-  else await updateWorkflowStep(writer.id, { status: "QUEUED", errorMessage: null });
-  await updateWorkflowRun(id, { status: "RUNNING", currentStep: "WRITER" });
-  await boss.send(
-    WORKFLOW_QUEUES.WRITER,
-    { workflowRunId: id } satisfies AgentJobPayload,
-    { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
-  );
-  return c.json({ ok: true, approvedVersion: parsedBody.data.version });
+  return c.json({ ok: true, approvedVersion: parsedBody.data.version, ...result.data });
 });

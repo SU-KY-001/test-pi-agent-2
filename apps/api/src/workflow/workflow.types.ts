@@ -15,6 +15,7 @@ export const STEP_STATUSES = [
   "WAITING_FOR_HUMAN",
   "COMPLETED",
   "FAILED",
+  "STALE",
 ] as const;
 
 export type StepStatus = (typeof STEP_STATUSES)[number];
