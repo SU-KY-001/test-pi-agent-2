@@ -20,6 +20,8 @@ const EnvSchema = z
     PI_API_KEY: z.string().optional(),
     PI_PROVIDER: z.string().default("opencode-go"),
     PI_MODEL: z.string().optional(),
+    // Đường dẫn tuyệt đối tới package pi-web-access đã cài (chỉ RESEARCHER dùng).
+    PI_WEB_ACCESS_DIR: z.string().optional(),
     PI_THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("medium"),
   })
   .transform((data) => ({

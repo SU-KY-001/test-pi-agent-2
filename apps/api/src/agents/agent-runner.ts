@@ -82,9 +82,20 @@ export class AgentValidationError extends Error {
   }
 }
 
+/**
+ * Chỉ RESEARCHER cần web; các bước còn lại chạy noTools để không thể tự bịa nguồn.
+ * Đường dẫn tuyệt đối tới package đã cài (sdk.d.ts: `additionalExtensionPaths` là local path,
+ * KHÔNG resolve qua node_modules của repo).
+ */
+export const PI_WEB_ACCESS_DIR =
+  env.PI_WEB_ACCESS_DIR || "C:/Users/ADMIN/.pi/agent/npm/node_modules/pi-web-access";
+
+const WEB_TOOL_NAMES = ["web_search", "fetch_content", "get_search_content", "source_check"];
+
 export interface AgentRunOptions {
   workflowRunId?: number;
   stepType?: string;
+  toolPolicy?: "WEB" | "NONE";
 }
 
 /**
@@ -121,11 +132,16 @@ export async function runStructuredAgent<T>(
 
   const fullSystemPrompt = `${systemPrompt}\n\n<response_format>\nYou MUST respond with valid JSON matching the schema below. Do not include any markdown fences or conversational text outside the JSON.\n<schema>\n${jsonSchemaStr}\n</schema>\n</response_format>`;
 
+  const useWebTools = options.toolPolicy === "WEB";
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: process.cwd(),
     agentDir: process.cwd(),
     settingsManager,
     noExtensions: true,
+    // noExtensions tắt dò tự động nhưng vẫn giữ additionalExtensionPaths:
+    // chỉ pi-web-access được nạp, không có skill/MCP/tool nào khác.
+    additionalExtensionPaths: useWebTools ? [PI_WEB_ACCESS_DIR] : [],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -134,16 +150,23 @@ export async function runStructuredAgent<T>(
   });
   await resourceLoader.reload();
 
-  const { session } = await createAgentSession({
+  const sessionOptions: Parameters<typeof createAgentSession>[0] = {
     model: liveModel,
     modelRuntime: piService.modelRuntime,
     sessionManager: SessionManager.inMemory(),
     settingsManager,
     resourceLoader,
     thinkingLevel: env.PI_THINKING_LEVEL,
-    tools: [],
-    noTools: "all",
-  });
+  };
+  if (useWebTools) {
+    // Allowlist là bộ lọc cứng trên registry: mọi tool khác bị loại bỏ.
+    sessionOptions.tools = [...WEB_TOOL_NAMES];
+  } else {
+    sessionOptions.tools = [];
+    sessionOptions.noTools = "all";
+  }
+
+  const { session } = await createAgentSession(sessionOptions);
 
   // Pi observability: subscribe BEFORE first prompt so no turn/message/tool
   // event is missed; detach in finally. Trace rows land in system_events as

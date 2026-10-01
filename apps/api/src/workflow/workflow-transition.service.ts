@@ -1,13 +1,12 @@
-import { STEP_REVIEW_POLICY } from "@repo/contracts";
+import { STEP_OUTPUT_SCHEMAS } from "@repo/contracts";
 import { log } from "../config/logger";
 import { boss } from "../queue/boss";
-import {
-  getNextStepType,
-  getDownstreamStepTypes,
-} from "./workflow-order";
+import { publishFromApprovedNode } from "./publication.service";
+import { getDownstreamStepTypes, getNextStepType } from "./workflow-order";
 import {
   atomicTransitionStepStatus,
-  createWorkflowStep,
+  ensureWorkflowStep,
+  getStepVersion,
   getWorkflowRun,
   getWorkflowStep,
   insertStepVersion,
@@ -16,11 +15,12 @@ import {
   updateWorkflowRun,
   updateWorkflowStep,
 } from "./workflow.repository";
-import { STEP_OUTPUT_SCHEMAS } from "./workflow.service";
+import { loadNodeByStepVersion } from "./workflow.service";
 import {
   MAX_QUEUE_RETRY_COUNT,
   WORKFLOW_QUEUES,
   type AgentJobPayload,
+  type NarrativeSelectionPayload,
   type StepType,
 } from "./workflow.types";
 
@@ -28,29 +28,34 @@ export type TransitionResult<T = unknown> =
   | { success: true; data?: T }
   | { success: false; error: string; status: 400 | 404 | 409 | 500; details?: unknown };
 
+/**
+ * Moderator duyệt một node ở trạm HITL: đánh dấu step COMPLETED, rồi hoặc
+ * enqueue bước kế tiếp với `parentVersionId` = node vừa duyệt (giữ nhánh),
+ * hoặc ở FACT_CHECKER thì ghi bản ghi xuất bản và kết thúc run.
+ */
 export async function continueStepWithGuidance(
   workflowRunId: number,
   stepType: StepType,
   version: number,
-  incomingGuidance?: string
-): Promise<TransitionResult<{ nextStep: StepType | null }>> {
+  incomingGuidance?: string,
+  narrativeSelection?: NarrativeSelectionPayload
+): Promise<TransitionResult<{ nextStep: StepType | null; publicationId?: number }>> {
   const run = await getWorkflowRun(workflowRunId);
   if (!run) return { success: false, error: "Workflow not found", status: 404 };
 
   const step = await getWorkflowStep(workflowRunId, stepType);
   if (!step) return { success: false, error: `Step ${stepType} not found`, status: 404 };
 
-  // Optimistic lock: only transition if step is WAITING_FOR_HUMAN and at requested version
-  const transitioned = await atomicTransitionStepStatus(
-    step.id,
-    "WAITING_FOR_HUMAN",
-    version,
-    {
-      status: "COMPLETED",
-      approvedVersion: version,
-    }
-  );
+  const approvedNode = await loadNodeByStepVersion(workflowRunId, stepType, version);
+  if (!approvedNode) {
+    return { success: false, error: `Node ${stepType} v${version} not found`, status: 404 };
+  }
 
+  // Optimistic lock: chỉ chuyển được khi step đang chờ người và đúng version.
+  const transitioned = await atomicTransitionStepStatus(step.id, "WAITING_FOR_HUMAN", version, {
+    status: "COMPLETED",
+    approvedVersion: version,
+  });
   if (!transitioned) {
     return {
       success: false,
@@ -63,53 +68,25 @@ export async function continueStepWithGuidance(
     workflowRunId,
     type: `step.${stepType.toLowerCase()}.approved`,
     message: `Step ${stepType} approved v${version}`,
-    metadataJson: { stepType, version, guidance: incomingGuidance ?? null },
+    metadataJson: {
+      stepType,
+      version,
+      nodeId: approvedNode.id,
+      guidance: incomingGuidance ?? null,
+      narrativeSelection: narrativeSelection ?? null,
+    },
   });
 
   const nextStepType = getNextStepType(stepType);
 
-  if (nextStepType) {
-    // Check if next step exists or create it
-    let nextStep = await getWorkflowStep(workflowRunId, nextStepType);
-    if (!nextStep) {
-      nextStep = await createWorkflowStep(workflowRunId, nextStepType, "QUEUED");
-    } else {
-      await updateWorkflowStep(nextStep.id, {
-        status: "QUEUED",
-        incomingGuidance: incomingGuidance ?? null,
-      });
-    }
-
-    if (incomingGuidance) {
-      await updateWorkflowStep(nextStep.id, { incomingGuidance });
-    }
-
-    await updateWorkflowRun(workflowRunId, {
-      status: "RUNNING",
-      currentStep: nextStepType,
-    });
-
-    await logEvent({
+  if (!nextStepType) {
+    // Gate 2: node FACT_CHECKER vừa được duyệt ⇒ ghi bản ghi xuất bản.
+    const publication = await publishFromApprovedNode({
       workflowRunId,
-      type: `step.${nextStepType.toLowerCase()}.queued`,
-      message: `Step ${nextStepType} queued`,
-      metadataJson: { incomingGuidance: incomingGuidance ?? null },
+      approvedVersionId: approvedNode.id,
+      approvedBy: "Moderator",
     });
 
-    await boss.send(
-      WORKFLOW_QUEUES[nextStepType],
-      { workflowRunId } satisfies AgentJobPayload,
-      { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
-    );
-
-    log.info(
-      { scope: "workflow-transition", workflowRunId, stepType, nextStepType },
-      "Step approved and next step queued"
-    );
-
-    return { success: true, data: { nextStep: nextStepType } };
-  } else {
-    // Pipeline complete
     await updateWorkflowRun(workflowRunId, {
       status: "COMPLETED",
       currentStep: null,
@@ -119,18 +96,53 @@ export async function continueStepWithGuidance(
     await logEvent({
       workflowRunId,
       type: "workflow.completed",
-      message: `Workflow ${workflowRunId} completed successfully`,
+      message: `Workflow ${workflowRunId} published as podcast #${publication.id}`,
+      metadataJson: { publicationId: publication.id, wordCount: publication.wordCount },
     });
 
-    log.info(
-      { scope: "workflow-transition", workflowRunId, stepType },
-      "Final step approved, workflow completed"
-    );
+    log.info({ scope: "workflow-transition", workflowRunId, publicationId: publication.id }, "Published");
 
-    return { success: true, data: { nextStep: null } };
+    return { success: true, data: { nextStep: null, publicationId: publication.id } };
   }
+
+  const nextStep = await ensureWorkflowStep(workflowRunId, nextStepType, "QUEUED");
+  await updateWorkflowStep(nextStep.id, {
+    status: "QUEUED",
+    incomingGuidance: incomingGuidance ?? null,
+  });
+  await updateWorkflowRun(workflowRunId, { status: "RUNNING", currentStep: nextStepType });
+
+  await boss.send(
+    WORKFLOW_QUEUES[nextStepType],
+    {
+      workflowRunId,
+      stepType: nextStepType,
+      parentVersionId: approvedNode.id,
+      guidance: incomingGuidance,
+      narrativeSelection,
+    } satisfies AgentJobPayload,
+    { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
+  );
+
+  await logEvent({
+    workflowRunId,
+    type: `step.${nextStepType.toLowerCase()}.queued`,
+    message: `Step ${nextStepType} queued from ${stepType} v${version}`,
+    metadataJson: { parentVersionId: approvedNode.id, incomingGuidance: incomingGuidance ?? null },
+  });
+
+  log.info(
+    { scope: "workflow-transition", workflowRunId, stepType, nextStepType },
+    "Step approved and next step queued"
+  );
+
+  return { success: true, data: { nextStep: nextStepType } };
 }
 
+/**
+ * Fork: chạy lại chính bước đó thành node mới là anh em với node hiện tại
+ * (parent = parent của node hiện tại), nên nhánh cũ vẫn xem lại được nguyên vẹn.
+ */
 export async function rerunStepWithFeedback(
   workflowRunId: number,
   stepType: StepType,
@@ -144,50 +156,57 @@ export async function rerunStepWithFeedback(
     return { success: false, error: `Step ${stepType} has no existing version to rerun`, status: 400 };
   }
 
-  // If step was completed or has downstream steps, invalidate them
+  const currentNode = await getStepVersion(step.id, step.currentVersion);
+  if (!currentNode) {
+    return { success: false, error: `Step ${stepType} v${step.currentVersion} not found`, status: 404 };
+  }
+
   const downstream = getDownstreamStepTypes(stepType);
   if (downstream.length > 0) {
     await setDownstreamStepsStale(workflowRunId, downstream);
     await logEvent({
       workflowRunId,
       type: "workflow.downstream_invalidated",
-      message: `Downstream steps invalidated by rerun of ${stepType}`,
-      metadataJson: { stepType, downstream },
+      message: `Downstream steps invalidated by fork of ${stepType} v${step.currentVersion}`,
+      metadataJson: { stepType, downstream, forkFromNodeId: currentNode.id },
     });
   }
 
-  // Update step to QUEUED
   await updateWorkflowStep(step.id, { status: "QUEUED" });
-  await updateWorkflowRun(workflowRunId, {
-    status: "RUNNING",
-    currentStep: stepType,
-  });
-
-  await logEvent({
-    workflowRunId,
-    type: `step.${stepType.toLowerCase()}.regenerating`,
-    message: `Regenerating ${stepType} from v${step.currentVersion}`,
-    metadataJson: { feedback, baseVersion: step.currentVersion },
-  });
+  await updateWorkflowRun(workflowRunId, { status: "RUNNING", currentStep: stepType });
 
   await boss.send(
     WORKFLOW_QUEUES[stepType],
     {
       workflowRunId,
-      feedback: feedback.trim(),
-      baseVersion: step.currentVersion,
+      stepType,
+      parentVersionId: currentNode.parentVersionId,
+      guidance: feedback.trim(),
     } satisfies AgentJobPayload,
     { retryLimit: MAX_QUEUE_RETRY_COUNT, retryBackoff: true }
   );
 
+  await logEvent({
+    workflowRunId,
+    type: `step.${stepType.toLowerCase()}.forked`,
+    message: `Fork ${stepType} from parent ${currentNode.parentVersionId ?? "root"}`,
+    metadataJson: {
+      stepType,
+      forkedFromNodeId: currentNode.id,
+      parentVersionId: currentNode.parentVersionId,
+      feedback,
+    },
+  });
+
   log.info(
-    { scope: "workflow-transition", workflowRunId, stepType, baseVersion: step.currentVersion },
-    "Step rerun enqueued with feedback"
+    { scope: "workflow-transition", workflowRunId, stepType, forkedFromNodeId: currentNode.id },
+    "Fork enqueued with feedback"
   );
 
   return { success: true };
 }
 
+/** Sửa tay output của Moderator: node mới kế thừa trực tiếp node gốc. */
 export async function directEditStep(
   workflowRunId: number,
   stepType: StepType,
@@ -217,9 +236,7 @@ export async function directEditStep(
     };
   }
 
-  // Validate schema
-  const schema = STEP_OUTPUT_SCHEMAS[stepType];
-  const parseResult = schema.safeParse(editedOutputJson);
+  const parseResult = STEP_OUTPUT_SCHEMAS[stepType].safeParse(editedOutputJson);
   if (!parseResult.success) {
     return {
       success: false,
@@ -229,19 +246,19 @@ export async function directEditStep(
     };
   }
 
+  const baseNode = await getStepVersion(step.id, baseVersion);
   const nextVersion = baseVersion + 1;
   await insertStepVersion({
     workflowStepId: step.id,
     version: nextVersion,
+    parentVersionId: baseNode?.id ?? null,
     inputJson: { directEdit: true, baseVersion, note: note ?? null },
     outputJson: parseResult.data,
     humanFeedback: note ? `[Direct Edit] ${note}` : "[Direct Edit]",
     validationStatus: "valid",
   });
 
-  await updateWorkflowStep(step.id, {
-    currentVersion: nextVersion,
-  });
+  await updateWorkflowStep(step.id, { currentVersion: nextVersion });
 
   await logEvent({
     workflowRunId,
@@ -249,11 +266,6 @@ export async function directEditStep(
     message: `Step ${stepType} directly edited to v${nextVersion}`,
     metadataJson: { baseVersion, newVersion: nextVersion, note: note ?? null },
   });
-
-  log.info(
-    { scope: "workflow-transition", workflowRunId, stepType, nextVersion },
-    "Direct edit saved as new version"
-  );
 
   return { success: true, data: { newVersion: nextVersion, output: parseResult.data } };
 }

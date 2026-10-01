@@ -1,112 +1,82 @@
 import {
-  AdvertisementSchema,
-  ContentPlanSchema,
-  ProductDataSchema,
-  ReviewResultSchema,
-  type Advertisement,
-  type ContentPlan,
-  type ProductData,
-  type ReviewResult,
+  STEP_OUTPUT_SCHEMAS,
+  type StepPayloadMap,
+  type StepType,
 } from "@repo/contracts";
+import { getAncestryLineage, type LineageNode } from "./workflow-lineage.service";
 import {
+  ensureWorkflowStep,
   getStepVersion,
-  getWorkflowStep,
   insertStepVersion,
+  updateWorkflowStep,
 } from "./workflow.repository";
 
-export const STEP_OUTPUT_SCHEMAS = {
-  EXTRACTOR: ProductDataSchema,
-  PLANNER: ContentPlanSchema,
-  WRITER: AdvertisementSchema,
-  REVIEWER: ReviewResultSchema,
-} as const;
-
-export type StepOutputMap = {
-  EXTRACTOR: ProductData;
-  PLANNER: ContentPlan;
-  WRITER: Advertisement;
-  REVIEWER: ReviewResult;
-};
-
-/** Why: Writer must only run on human-approved Planner output, never latest draft. */
-export async function loadApprovedPlannerOutput(
-  workflowRunId: number
-): Promise<{ stepId: number; version: number; plan: ContentPlan }> {
-  const planner = await getWorkflowStep(workflowRunId, "PLANNER");
-  if (!planner || planner.approvedVersion == null) {
-    throw new Error("Planner has no approved version");
+/**
+ * Node chỉ nhìn thấy output của tổ tiên cùng nhánh. Nếu bước trước chưa có
+ * trên nhánh này (fork thiếu dữ liệu) thì ném lỗi để job fail rõ ràng thay vì
+ * chạy với ngữ cảnh rỗng.
+ */
+export async function loadPredecessorOutput<K extends StepType>(
+  parentVersionId: number | null,
+  stepType: K
+): Promise<StepPayloadMap[K]> {
+  const { predecessorOutputs } = await getAncestryLineage(parentVersionId);
+  const output = predecessorOutputs[stepType];
+  if (output == null) {
+    throw new Error(`Lineage thiếu output của bước ${stepType} (parent=${parentVersionId ?? "root"})`);
   }
-  const row = await getStepVersion(planner.id, planner.approvedVersion);
-  if (!row) throw new Error(`Approved Planner v${planner.approvedVersion} not found`);
-  return {
-    stepId: planner.id,
-    version: planner.approvedVersion,
-    plan: ContentPlanSchema.parse(row.outputJson),
-  };
+  return STEP_OUTPUT_SCHEMAS[stepType].parse(output) as StepPayloadMap[K];
 }
 
-/** Why: Reviewer must only run on human-approved Writer output, never latest draft. */
-export async function loadApprovedWriterOutput(
-  workflowRunId: number
-): Promise<{ stepId: number; version: number; advertisement: Advertisement }> {
-  const writer = await getWorkflowStep(workflowRunId, "WRITER");
-  if (!writer || writer.approvedVersion == null) {
-    throw new Error("Writer has no approved version");
-  }
-  const row = await getStepVersion(writer.id, writer.approvedVersion);
-  if (!row) throw new Error(`Approved Writer v${writer.approvedVersion} not found`);
-  return {
-    stepId: writer.id,
-    version: writer.approvedVersion,
-    advertisement: AdvertisementSchema.parse(row.outputJson),
-  };
+/** Toàn bộ ngữ cảnh tổ tiên thô, dùng cho prompt/audit. */
+export async function loadLineage(parentVersionId: number | null) {
+  return getAncestryLineage(parentVersionId);
 }
 
-export async function loadLatestStepOutput(
-  workflowRunId: number,
-  stepType: "EXTRACTOR"
-): Promise<ProductData>;
-export async function loadLatestStepOutput(
-  workflowRunId: number,
-  stepType: "PLANNER"
-): Promise<ContentPlan>;
-export async function loadLatestStepOutput(
-  workflowRunId: number,
-  stepType: "WRITER"
-): Promise<Advertisement>;
-export async function loadLatestStepOutput(
-  workflowRunId: number,
-  stepType: "REVIEWER"
-): Promise<ReviewResult>;
-export async function loadLatestStepOutput(
-  workflowRunId: number,
-  stepType: keyof StepOutputMap
-): Promise<StepOutputMap[keyof StepOutputMap]> {
-  const step = await getWorkflowStep(workflowRunId, stepType);
-  if (!step || step.currentVersion == null) {
-    throw new Error(`Step ${stepType} has no completed version`);
+export function findAncestorNode(
+  ancestors: LineageNode[],
+  stepType: StepType
+): LineageNode | null {
+  for (let i = ancestors.length - 1; i >= 0; i -= 1) {
+    const node = ancestors[i];
+    if (node && node.stepType === stepType) return node;
   }
-  const row = await getStepVersion(step.id, step.currentVersion);
-  if (!row) throw new Error(`Step ${stepType} v${step.currentVersion} not found`);
-  return STEP_OUTPUT_SCHEMAS[stepType].parse(row.outputJson);
+  return null;
 }
 
-/** Why: version rows are append-only; regen bumps current_version without touching v1. */
-export async function saveNextStepVersion<T extends keyof StepOutputMap>(
-  workflowRunId: number,
-  stepType: T,
-  input: unknown,
-  output: StepOutputMap[T],
-  humanFeedback?: string | null
-) {
-  const step = await getWorkflowStep(workflowRunId, stepType);
-  if (!step) throw new Error(`Step ${stepType} not found`);
+/**
+ * Ghi một node bất biến mới cho bước đang chạy và trỏ current_version của step
+ * vào node đó. Version đếm theo từng workflow_step, còn nhánh được xác định
+ * bằng parentVersionId.
+ */
+export async function saveStepNode<T extends StepType>(params: {
+  workflowRunId: number;
+  stepType: T;
+  parentVersionId: number | null;
+  input: unknown;
+  output: StepPayloadMap[T];
+  humanFeedback?: string | null;
+}) {
+  const step = await ensureWorkflowStep(params.workflowRunId, params.stepType);
   const nextVersion = (step.currentVersion ?? 0) + 1;
-  return insertStepVersion({
+  const node = await insertStepVersion({
     workflowStepId: step.id,
     version: nextVersion,
-    inputJson: input,
-    outputJson: output,
-    humanFeedback: humanFeedback ?? null,
+    parentVersionId: params.parentVersionId,
+    inputJson: params.input,
+    outputJson: params.output,
+    humanFeedback: params.humanFeedback ?? null,
   });
+  await updateWorkflowStep(step.id, { currentVersion: nextVersion });
+  return { step, node };
+}
+
+/** Bản ghi node của một (step, version) — đơn vị Moderator duyệt. */
+export async function loadNodeByStepVersion(
+  workflowRunId: number,
+  stepType: StepType,
+  version: number
+) {
+  const step = await ensureWorkflowStep(workflowRunId, stepType);
+  return getStepVersion(step.id, version);
 }
