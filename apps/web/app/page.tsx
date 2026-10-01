@@ -165,10 +165,38 @@ export default function HomePage() {
     }
   }, [workflowId]);
 
+  // Hỗ trợ đọc runId từ query string (?runId=123) để có thể reload hoặc bookmark
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const runIdParam = params.get("runId");
+    if (runIdParam) {
+      const parsed = parseInt(runIdParam, 10);
+      if (!Number.isNaN(parsed) && parsed > 0 && parsed !== workflowId) {
+        setWorkflowId(parsed);
+      }
+    }
+  }, []);
+
+  // Gọi refresh ngay khi workflowId được set
   useEffect(() => {
     if (workflowId == null) return;
     void refresh();
   }, [workflowId, refresh]);
+
+  // Cập nhật URL khi workflowId thay đổi mà không gây reload trang
+  useEffect(() => {
+    if (typeof window === "undefined" || !workflowId) return;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("runId") !== String(workflowId)) {
+        url.searchParams.set("runId", String(workflowId));
+        window.history.replaceState({}, "", url.toString());
+      }
+    } catch {
+      // Bỏ qua lỗi URL không hợp lệ trên một số môi trường kiểm thử
+    }
+  }, [workflowId]);
 
   const polling = workflow != null && (workflow.status === "RUNNING" || workflow.status === "PENDING");
   useEffect(() => {
