@@ -16,13 +16,18 @@ const EnvSchema = z
     PGLITE_DATA_DIR: z.string().optional(),
     OPENCODE_API_KEY: z.string().optional(),
     OPENCODE_MODEL: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
+    PI_API_KEY: z.string().optional(),
     PI_PROVIDER: z.string().default("opencode-go"),
     PI_MODEL: z.string().optional(),
     PI_THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("medium"),
   })
   .transform((data) => ({
     ...data,
-    RESOLVED_MODEL: data.PI_MODEL || data.OPENCODE_MODEL || "minimax-m3",
+    RESOLVED_MODEL:
+      data.PI_MODEL ||
+      data.OPENCODE_MODEL ||
+      (data.PI_PROVIDER === "google" ? "gemini-2.5-flash" : "minimax-m3"),
   }));
 
 const parsed = EnvSchema.safeParse(process.env);

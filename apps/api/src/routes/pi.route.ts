@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { env } from "../config/env";
 import { piService } from "../pi/pi.service";
 import { log } from "../config/logger";
 import { PiTestResponseSchema } from "@repo/contracts";
@@ -11,8 +12,8 @@ piRoute.post("/test", async (c) => {
       return c.json(
         {
           ok: false,
-          error: "PiService is not configured (missing OPENCODE_API_KEY or model unavailable)",
-          provider: piService.model?.id ? "opencode-go" : "unconfigured",
+          error: "PiService is not configured (missing API key or model unavailable)",
+          provider: piService.model?.id ? env.PI_PROVIDER : "unconfigured",
           model: piService.model?.id ?? "none",
         },
         503

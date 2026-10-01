@@ -35,7 +35,7 @@ Product on top: 4-agent ad pipeline (Extractor → Planner → Writer → Review
 - [x] Phase 8: Dashboard v2 (shadcn dark mode, HITL card, SSE trace timeline, thinking config, strict patch types, OPENCODE_MODEL alias)
 
 ## Next (proposed, not started)
-- [ ] Fix `agent-runner` hardcoded `"opencode-go"` → use `env.PI_PROVIDER`.
+- [x] Fix `agent-runner` hardcoded `"opencode-go"` → use `env.PI_PROVIDER`.
 - [ ] Remove or reuse dead `saveNextStepVersion` (jobs insert directly today).
 - [ ] Confirm `GET /workflows/:id` version order (currently newest-first) vs UI tabs expectation.
 - [ ] Add DB check constraints for status enums if Zod drift becomes a risk.

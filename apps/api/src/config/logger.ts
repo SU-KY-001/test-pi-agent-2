@@ -4,7 +4,14 @@ import path from "node:path";
 import fs from "node:fs";
 import { env } from "./env";
 
-const REDACT_PATHS = ["OPENCODE_API_KEY", "*.apiKey", "*.token", "*.authorization"];
+const REDACT_PATHS = [
+  "OPENCODE_API_KEY",
+  "GEMINI_API_KEY",
+  "PI_API_KEY",
+  "*.apiKey",
+  "*.token",
+  "*.authorization",
+];
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 export const logDir = process.env.LOG_DIR

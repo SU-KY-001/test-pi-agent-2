@@ -68,8 +68,17 @@ export class PiService {
         allowModelNetwork: false,
         modelRefreshTimeoutMs: PI_MODEL_REFRESH_TIMEOUT_MS,
       });
-      if (env.OPENCODE_API_KEY) {
-        this.modelRuntime.setRuntimeApiKey("opencode-go", env.OPENCODE_API_KEY);
+      const resolvedApiKey =
+        env.PI_API_KEY ||
+        (env.PI_PROVIDER === "google"
+          ? env.GEMINI_API_KEY || process.env.GEMINI_API_KEY
+          : env.OPENCODE_API_KEY || process.env.OPENCODE_API_KEY);
+
+      if (resolvedApiKey) {
+        this.modelRuntime.setRuntimeApiKey(env.PI_PROVIDER, resolvedApiKey);
+        if (env.PI_PROVIDER === "google") {
+          process.env.GEMINI_API_KEY = resolvedApiKey;
+        }
       }
       const targetModelName = env.RESOLVED_MODEL;
       const resolvedModel = this.modelRuntime.getModel(env.PI_PROVIDER, targetModelName);
@@ -84,7 +93,7 @@ export class PiService {
           log.warn({ provider: env.PI_PROVIDER }, "No models found for provider");
         }
       }
-      this.isReady = !!(this.model && (env.OPENCODE_API_KEY || process.env.OPENCODE_API_KEY));
+      this.isReady = !!(this.model && resolvedApiKey);
       log.info(
         { provider: env.PI_PROVIDER, model: this.model?.id ?? "none", ready: this.isReady },
         "PiService initialized"

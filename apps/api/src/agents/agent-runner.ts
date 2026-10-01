@@ -108,7 +108,7 @@ export async function runStructuredAgent<T>(
     step: options.stepType ?? "unknown",
     model: piService.model.id,
   });
-  const liveModel = piService.modelRuntime.getModel("opencode-go", piService.model.id);
+  const liveModel = piService.modelRuntime.getModel(env.PI_PROVIDER, piService.model.id);
   if (!liveModel) throw new Error(`Model ${piService.model.id} is no longer available`);
 
   // Minimal resource surface: no skills, no extensions, no context files.
