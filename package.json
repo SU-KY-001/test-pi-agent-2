@@ -9,7 +9,8 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
-    "db:clean": "bun ./packages/db/src/check-db.ts --force"
+    "db:clean": "bun ./packages/db/src/check-db.ts --force",
+    "db:reset": "bun ./packages/db/src/scripts/reset.ts"
   },
   "devDependencies": {
     "turbo": "^2.4.4",
