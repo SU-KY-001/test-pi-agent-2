@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Sử Ký Agent — Ad Workflow",
-  description: "Tạo quảng cáo từ mô tả sản phẩm với pipeline AI 4 bước",
+  title: "Sử Ký Agent — Podcast Lịch sử",
+  description: "Dựng series podcast lịch sử 3 tập với pipeline AI 7 bước và 3 trạm duyệt người (HITL)",
 };
 
 export default function RootLayout({

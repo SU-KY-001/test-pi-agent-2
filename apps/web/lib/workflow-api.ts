@@ -5,43 +5,136 @@ import {
   GetWorkflowEventsResponseSchema,
   type GetWorkflowResponse,
   GetWorkflowResponseSchema,
+  type NarrativeFocusSelection,
+  type StepType,
+  type WorkflowTreeResponse,
+  WorkflowTreeResponseSchema,
 } from "@repo/contracts";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-async function parseOrThrow<T>(
+
+function readErrorMessage(data: unknown, statusText: string): string {
+  if (data && typeof data === "object" && "error" in data) {
+    const raw = (data as { error: unknown }).error;
+    if (raw != null) return String(raw);
+  }
+  return statusText;
+}
+
+async function requestJson<T>(
   res: Response,
   parse: (data: unknown) => { success: boolean; data?: T },
   label: string
 ): Promise<T> {
   const data: unknown = await res.json().catch(() => null);
   if (!res.ok) {
-    const detail =
-      data && typeof data === "object" && "error" in data ? String(data.error) : await Promise.resolve(res.statusText);
-    throw new Error(`${label} failed (${res.status}): ${detail}`);
+    throw new Error(`${label} failed (${res.status}): ${readErrorMessage(data, res.statusText)}`);
   }
   const parsed = parse(data);
   if (!parsed.success || parsed.data == null) throw new Error(`Invalid ${label} response schema`);
   return parsed.data;
 }
 
-export async function createWorkflow(rawProductText: string): Promise<CreateWorkflowResponse> {
+async function requestOk(res: Response, label: string): Promise<unknown> {
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(`${label} failed (${res.status}): ${readErrorMessage(data, res.statusText)}`);
+  }
+  return data;
+}
+
+export async function createWorkflow(topic: string): Promise<CreateWorkflowResponse> {
   const res = await fetch(`${API_BASE_URL}/workflows`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rawProductText }),
+    body: JSON.stringify({ topic }),
   });
-  return parseOrThrow(res, (d) => CreateWorkflowResponseSchema.safeParse(d), "Create workflow");
+  return requestJson(res, (d) => CreateWorkflowResponseSchema.safeParse(d), "Create workflow");
 }
 
 export async function fetchWorkflow(id: number): Promise<GetWorkflowResponse> {
   const res = await fetch(`${API_BASE_URL}/workflows/${id}`, { cache: "no-store" });
-  return parseOrThrow(res, (d) => GetWorkflowResponseSchema.safeParse(d), "Fetch workflow");
+  return requestJson(res, (d) => GetWorkflowResponseSchema.safeParse(d), "Fetch workflow");
+}
+
+export async function fetchWorkflowTree(id: number): Promise<WorkflowTreeResponse> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/tree`, { cache: "no-store" });
+  return requestJson(res, (d) => WorkflowTreeResponseSchema.safeParse(d), "Fetch execution tree");
 }
 
 export async function fetchWorkflowEvents(id: number, limit = 200): Promise<GetWorkflowEventsResponse> {
   const res = await fetch(`${API_BASE_URL}/events?workflowRunId=${id}&limit=${limit}`, { cache: "no-store" });
-  return parseOrThrow(res, (d) => GetWorkflowEventsResponseSchema.safeParse(d), "Fetch workflow events");
+  return requestJson(res, (d) => GetWorkflowEventsResponseSchema.safeParse(d), "Fetch workflow events");
 }
+
+export interface ContinueStepOptions {
+  incomingGuidance?: string;
+  /** Bắt buộc ở Gate 0: trọng tâm kể Moderator chọn từ menu. */
+  narrativeSelection?: NarrativeFocusSelection;
+}
+
+/** Payload quyết định của Moderator — khớp `StepDecisionRequestSchema` bên contracts. */
+type StepDecision =
+  | ({ action: "CONTINUE"; stepType: StepType; baseVersion: number } & ContinueStepOptions)
+  | { action: "RERUN"; stepType: StepType; feedback: string }
+  | {
+      action: "DIRECT_EDIT";
+      stepType: StepType;
+      baseVersion: number;
+      editedOutputJson: unknown;
+      note?: string;
+    };
+
+async function submitStepDecision(id: number, decision: StepDecision): Promise<unknown> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/step-decisions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(decision),
+  });
+  return requestOk(res, `Step decision ${decision.action} ${decision.stepType}`);
+}
+
+export async function continueStep(
+  id: number,
+  stepType: StepType,
+  baseVersion: number,
+  options: ContinueStepOptions = {}
+): Promise<unknown> {
+  return submitStepDecision(id, { action: "CONTINUE", stepType, baseVersion, ...options });
+}
+
+export async function rerunStep(id: number, stepType: StepType, feedback: string): Promise<unknown> {
+  return submitStepDecision(id, { action: "RERUN", stepType, feedback });
+}
+
+export async function directEditStep(
+  id: number,
+  stepType: StepType,
+  baseVersion: number,
+  editedOutputJson: unknown,
+  note?: string
+): Promise<unknown> {
+  return submitStepDecision(id, { action: "DIRECT_EDIT", stepType, baseVersion, editedOutputJson, note });
+}
+
+export async function publishWorkflow(
+  id: number,
+  approvedVersionId: number,
+  approvedBy = "Moderator"
+): Promise<number | null> {
+  const res = await fetch(`${API_BASE_URL}/workflows/${id}/publications`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approvedVersionId, approvedBy }),
+  });
+  const data = await requestOk(res, "Publish workflow");
+  if (data && typeof data === "object" && "publicationId" in data) {
+    const raw = (data as { publicationId: unknown }).publicationId;
+    return typeof raw === "number" ? raw : null;
+  }
+  return null;
+}
+
 export interface WorkflowEventStreamHandlers {
   onEvent: (event: GetWorkflowEventsResponse["events"][number]) => void;
   onDone?: (status: string) => void;
@@ -80,61 +173,4 @@ export function subscribeWorkflowEvents(
     handlers.onError?.(new Error("Event stream interrupted, retrying…"));
   };
   return () => source.close();
-}
-
-export async function regeneratePlanner(id: number, feedback: string): Promise<void> {
-  return rerunStep(id, "PLANNER", feedback);
-}
-
-export async function approvePlanner(id: number, version: number): Promise<void> {
-  return continueStep(id, "PLANNER", version);
-}
-
-export async function rerunStep(
-  id: number,
-  stepType: string,
-  feedback: string
-): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/rerun`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ feedback }),
-  });
-  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), `Rerun step ${stepType}`);
-}
-
-export async function continueStep(
-  id: number,
-  stepType: string,
-  version: number,
-  incomingGuidance?: string
-): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/continue`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version, incomingGuidance }),
-  });
-  await parseOrThrow(res, (d) => ({ success: true as const, data: d as unknown }), `Continue step ${stepType}`);
-}
-
-export async function directEditStep(
-  id: number,
-  stepType: string,
-  baseVersion: number,
-  editedOutputJson: unknown,
-  note?: string
-): Promise<{ newVersion: number; output: unknown }> {
-  const res = await fetch(`${API_BASE_URL}/workflows/${id}/steps/${stepType}/direct-edit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ baseVersion, editedOutputJson, note }),
-  });
-  return parseOrThrow(
-    res,
-    (d) => ({
-      success: typeof d === "object" && d !== null && "ok" in d,
-      data: d as { newVersion: number; output: unknown },
-    }),
-    `Direct edit step ${stepType}`
-  );
 }

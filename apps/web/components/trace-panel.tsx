@@ -54,14 +54,10 @@ function classify(e: WorkflowEvent): ItemVisual {
   const meta = parseMeta(e);
   const type = e.type;
 
+  const parts = type.split(".");
   let agentName: string | undefined;
-  if (type.startsWith("pi.")) {
-    agentName = type.split(".")[1]?.toUpperCase();
-  } else if (type.includes(".")) {
-    const f = type.split(".")[0];
-    if (["extractor", "planner", "writer", "reviewer"].includes(f)) {
-      agentName = f.toUpperCase();
-    }
+  if (type.startsWith("pi.") || parts[0] === "step") {
+    agentName = parts[1]?.toUpperCase();
   }
 
   // 1. Workflow khởi tạo

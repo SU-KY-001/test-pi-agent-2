@@ -6,14 +6,80 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { QuickChips } from "./quick-chips";
 
+const RERUN_CHIPS: Record<StepType, string[]> = {
+  RESEARCHER: [
+    "Bổ sung nguồn khảo cổ học cho giai đoạn này",
+    "Ưu tiên tư liệu chính sử Tier 1",
+    "Đề xuất thêm trọng tâm về nhân vật",
+    "Làm rõ bối cảnh địa lý của trận địa",
+    "Thêm câu hỏi nghiên cứu về hệ quả chính trị",
+  ],
+  SOURCE_EVALUATOR: [
+    "Kiểm chứng chéo kỹ hơn giữa Tier 1 và Tier 4",
+    "Gắn cờ các nguồn có dấu hiệu echo chamber",
+    "Loại bỏ nguồn thiếu căn cứ khảo cổ",
+    "So sánh dị bản chép tay giữa các bộ sử",
+  ],
+  FACT_EXTRACTOR: [
+    "Tách thêm fact card về niên đại và địa danh",
+    "Ghi rõ đoạn trích dẫn cho từng fact card",
+    "Điền các khoảng trống sử liệu còn thiếu",
+    "Bổ sung fact card về nhân vật phản trắc",
+  ],
+  STORY_PLANNER: [
+    "Nhấn mạnh cơ chế bãi cọc 45 độ và biên độ thủy triều 3-4m",
+    "Làm rõ sự cô lập và động cơ phản trắc của Kiều Công Tiễn",
+    "Tập trung vào cuộc chạy đua thời gian từ Ái Châu ra Đại La",
+    "Bám sát tư liệu khảo cổ thay vì dã sử",
+    "Siết chặt hook kết mỗi tập",
+  ],
+  SCRIPT_WRITER: [
+    "Làm mềm câu văn, chêm thêm liên từ nối chuyển ý",
+    "Cắt bỏ các chi tiết suy đoán cảm xúc nội tâm nhân vật",
+    "Giữ câu dài vừa phải để dễ đọc TTS",
+    "Tăng cảm giác căng thẳng ở cao trào tập 3",
+  ],
+  ORALIZER: [
+    "Rút gọn câu còn dưới 25 từ",
+    "Xóa toàn bộ dấu gạch ngang và dấu hai chấm",
+    "Thêm liên từ nối ở đầu các chuyển ý",
+    "Điều chỉnh nhịp lấy hơi ở phân đoạn dài",
+  ],
+  FACT_CHECKER: [
+    "Kiểm lại các claim không có fact card đối chiếu",
+    "Siết tiêu chí: không suy đoán nội tâm nhân vật",
+    "Đối chiếu lại số liệu thủy triều và địa danh",
+  ],
+};
+
+const CONTINUE_CHIPS: Record<StepType, string[]> = {
+  RESEARCHER: [
+    "Bám sát trọng tâm kể đã chọn",
+    "Giữ giọng kể trung tính",
+    "Ưu tiên Tier 1 khi nguồn mâu thuẫn",
+  ],
+  SOURCE_EVALUATOR: [],
+  FACT_EXTRACTOR: [],
+  STORY_PLANNER: [
+    "Mỗi tập giữ một hook kết rõ ràng",
+    "Không vượt 4.500 từ mỗi tập",
+    "Mở đầu tập 2 nối tiếp cliffhanger tập 1",
+  ],
+  SCRIPT_WRITER: [],
+  ORALIZER: [],
+  FACT_CHECKER: [],
+};
+
 interface ActionDeckProps {
   stepType: StepType;
   currentVersion: number;
   currentOutputJson?: unknown;
   onRerun: (feedback: string) => Promise<void>;
-  onContinue: (version: number, guidance?: string) => Promise<void>;
+  /** Bỏ trống khi hành động duyệt do card chuyên biệt đảm nhiệm (Gate 0). */
+  onContinue?: (version: number, guidance?: string) => Promise<void>;
   onDirectEdit?: (baseVersion: number, editedOutput: unknown, note?: string) => Promise<void>;
   isSubmitting: boolean;
+  continueLabel?: string;
 }
 
 export function ActionDeck({
@@ -24,6 +90,7 @@ export function ActionDeck({
   onContinue,
   onDirectEdit,
   isSubmitting,
+  continueLabel = "Duyệt & Đi tiếp →",
 }: ActionDeckProps) {
   const [feedback, setFeedback] = useState("");
   const [guidance, setGuidance] = useState("");
@@ -31,7 +98,6 @@ export function ActionDeck({
   const [directJsonText, setDirectJsonText] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Initialize direct edit textarea when toggled
   const handleToggleDirectEdit = () => {
     if (!isEditingDirect) {
       setDirectJsonText(JSON.stringify(currentOutputJson, null, 2));
@@ -44,7 +110,7 @@ export function ActionDeck({
     if (!onDirectEdit) return;
     try {
       setEditError(null);
-      const parsed = JSON.parse(directJsonText);
+      const parsed: unknown = JSON.parse(directJsonText);
       await onDirectEdit(currentVersion, parsed, "Chỉnh sửa trực tiếp từ giao diện");
       setIsEditingDirect(false);
     } catch (err) {
@@ -52,44 +118,18 @@ export function ActionDeck({
     }
   };
 
-  const rerunChips =
-    stepType === "PLANNER"
-      ? [
-          "Tập trung vào dân văn phòng",
-          "Nhấn mạnh bảo hành và độ bền",
-          "Đổi tone sang tối giản",
-          "Tăng tính cấp bách",
-          "Tạo góc nhìn độc lạ",
-        ]
-      : [
-          "Ngắn gọn hơn nữa",
-          "Headline giật gân hơn",
-          "Đổi CTA kêu gọi mua ngay",
-          "Nhấn mạnh giá và khuyến mãi",
-          "Văn phong tinh tế hơn",
-        ];
-
-  const continueChips =
-    stepType === "PLANNER"
-      ? [
-          "Viết bài ngắn dưới 100 từ",
-          "Dùng tone hài hước nhẹ",
-          "Nhấn mạnh tiêu chuẩn chất lượng",
-          "Tránh dùng emoji",
-        ]
-      : [
-          "Soi kỹ thông số kỹ thuật",
-          "Kiểm tra kỹ các cam kết",
-          "Đảm bảo không bị cường điệu",
-        ];
+  const rerunChips = RERUN_CHIPS[stepType];
+  const continueChips = CONTINUE_CHIPS[stepType];
 
   return (
-    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-4">
+    <div className="mt-4 space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
       <div className="flex items-center justify-between border-b border-border/60 pb-3">
         <div className="flex items-center gap-2">
-          <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+          <span className="flex size-2.5 rounded-full bg-amber-500 animate-pulse" aria-hidden />
           <h4 className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            Duyệt kết quả bước {stepType} (Bản v{currentVersion})
+            {onContinue
+              ? `Duyệt kết quả ${stepType} (bản v${currentVersion})`
+              : `Chạy lại nhánh mới cho ${stepType} (bản v${currentVersion})`}
           </h4>
         </div>
         {onDirectEdit && (
@@ -100,29 +140,24 @@ export function ActionDeck({
             onClick={handleToggleDirectEdit}
             className="h-7 text-xs font-medium"
           >
-            {isEditingDirect ? "Đóng chỉnh sửa" : "✏️ Sửa trực tiếp"}
+            {isEditingDirect ? "Đóng chỉnh sửa" : "✏️ Sửa trực tiếp JSON"}
           </Button>
         )}
       </div>
 
       {isEditingDirect ? (
-        /* Direct In-Place Edit Form */
         <div className="space-y-3 rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-foreground">
-              Chỉnh sửa trực tiếp dữ liệu đầu ra:
-            </span>
-            <span className="text-[11px] text-muted-foreground">Định dạng JSON</span>
+            <span className="text-xs font-semibold text-foreground">Chỉnh sửa trực tiếp dữ liệu đầu ra</span>
+            <span className="text-[11px] text-muted-foreground">Định dạng JSON (kiểm tra bằng JSON.parse)</span>
           </div>
           <Textarea
             value={directJsonText}
-            onChange={(e) => setDirectJsonText(e.target.value)}
+            onChange={(event) => setDirectJsonText(event.target.value)}
             disabled={isSubmitting}
-            className="font-mono text-xs min-h-[180px] bg-muted/30"
+            className="min-h-[180px] bg-muted/30 font-mono text-xs"
           />
-          {editError && (
-            <p className="text-xs text-red-500 font-medium">⚠️ {editError}</p>
-          )}
+          {editError && <p className="text-xs font-medium text-red-500">⚠️ {editError}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Button
               size="sm"
@@ -136,90 +171,85 @@ export function ActionDeck({
             <Button
               size="sm"
               disabled={isSubmitting}
-              onClick={handleSaveDirectEdit}
-              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => void handleSaveDirectEdit()}
+              className="h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
             >
-              {isSubmitting ? "Đang lưu..." : "Lưu & Tiếp tục →"}
+              {isSubmitting ? "Đang lưu…" : "Lưu bản chỉnh sửa (v" + (currentVersion + 1) + ")"}
             </Button>
           </div>
         </div>
       ) : (
-        /* 2-Column or Stacked HITL Deck */
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Card 1: RERUN (Amber) */}
-          <div className="rounded-lg border border-amber-300/60 dark:border-amber-900/60 bg-card p-4 flex flex-col justify-between space-y-3 shadow-xs">
+        <div className={onContinue ? "grid grid-cols-1 gap-4 md:grid-cols-2" : "grid grid-cols-1 gap-4"}>
+          <div className="flex flex-col justify-between space-y-3 rounded-lg border border-amber-300/60 bg-card p-4 shadow-xs dark:border-amber-900/60">
             <div className="space-y-2">
               <div className="flex items-center gap-1.5">
-                <span className="text-sm">🔄</span>
-                <span className="text-xs font-semibold text-foreground">
-                  Yêu cầu Agent viết lại
+                <span className="text-sm" aria-hidden>
+                  🔄
                 </span>
+                <span className="text-xs font-semibold text-foreground">Tạo nhánh mới từ node này</span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                Gửi phản hồi yêu cầu Agent tạo phiên bản mới v{currentVersion + 1}.
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Fork một node anh em v{currentVersion + 1} từ cùng node cha; các bước phía sau sẽ bị đánh dấu đã cũ.
               </p>
               <Textarea
-                placeholder="Nhập yêu cầu sửa đổi..."
+                placeholder="Nhập phản hồi / lời dặn cho lần chạy lại…"
                 value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
+                onChange={(event) => setFeedback(event.target.value)}
                 disabled={isSubmitting}
-                className="text-xs min-h-[72px] resize-y bg-background"
+                className="min-h-[72px] resize-y bg-background text-xs"
               />
               <QuickChips
                 chips={rerunChips}
                 disabled={isSubmitting}
-                onSelect={(chip) =>
-                  setFeedback((prev) => (prev ? `${prev}, ${chip.toLowerCase()}` : chip))
-                }
+                onSelect={(chip) => setFeedback((prev) => (prev ? `${prev}, ${chip.toLowerCase()}` : chip))}
               />
             </div>
             <Button
               size="sm"
               variant="outline"
               disabled={isSubmitting || !feedback.trim()}
-              onClick={() => onRerun(feedback.trim())}
-              className="w-full text-xs font-semibold border-amber-500/50 hover:bg-amber-500/10 text-amber-800 dark:text-amber-300"
+              onClick={() => void onRerun(feedback.trim())}
+              className="w-full border-amber-500/50 text-xs font-semibold text-amber-800 hover:bg-amber-500/10 dark:text-amber-300"
             >
-              {isSubmitting ? "Đang gửi..." : "Gửi phản hồi & Sửa lại"}
+              {isSubmitting ? "Đang gửi…" : "Gửi phản hồi & chạy lại nhánh mới"}
             </Button>
           </div>
 
-          {/* Card 2: CONTINUE (Emerald) */}
-          <div className="rounded-lg border border-emerald-300/60 dark:border-emerald-900/60 bg-card p-4 flex flex-col justify-between space-y-3 shadow-xs">
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm">✅</span>
-                <span className="text-xs font-semibold text-foreground">
-                  Duyệt & Chuyển bước tiếp theo
-                </span>
+          {onContinue && (
+            <div className="flex flex-col justify-between space-y-3 rounded-lg border border-emerald-300/60 bg-card p-4 shadow-xs dark:border-emerald-900/60">
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm" aria-hidden>
+                    ✅
+                  </span>
+                  <span className="text-xs font-semibold text-foreground">Duyệt &amp; chuyển bước</span>
+                </div>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Chốt bản v{currentVersion} và cho pipeline 7 bước chạy tiếp.
+                </p>
+                <Textarea
+                  placeholder="Lời dặn kèm cho bước tiếp theo (tùy chọn)…"
+                  value={guidance}
+                  onChange={(event) => setGuidance(event.target.value)}
+                  disabled={isSubmitting}
+                  className="min-h-[72px] resize-y bg-background text-xs"
+                />
+                <QuickChips
+                  chips={continueChips}
+                  disabled={isSubmitting}
+                  onSelect={(chip) => setGuidance((prev) => (prev ? `${prev}, ${chip.toLowerCase()}` : chip))}
+                />
               </div>
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                Chốt bản v{currentVersion} này và bắt đầu bước tiếp theo trong quy trình.
-              </p>
-              <Textarea
-                placeholder="Lời dặn cho bước tiếp theo (tùy chọn)..."
-                value={guidance}
-                onChange={(e) => setGuidance(e.target.value)}
+              <Button
+                size="sm"
                 disabled={isSubmitting}
-                className="text-xs min-h-[72px] resize-y bg-background"
-              />
-              <QuickChips
-                chips={continueChips}
-                disabled={isSubmitting}
-                onSelect={(chip) =>
-                  setGuidance((prev) => (prev ? `${prev}, ${chip.toLowerCase()}` : chip))
-                }
-              />
+                onClick={() => void onContinue(currentVersion, guidance.trim() || undefined)}
+                className="w-full bg-emerald-600 text-xs font-semibold text-white hover:bg-emerald-700"
+              >
+                {isSubmitting ? "Đang xử lý…" : continueLabel}
+              </Button>
             </div>
-            <Button
-              size="sm"
-              disabled={isSubmitting}
-              onClick={() => onContinue(currentVersion, guidance.trim() || undefined)}
-              className="w-full text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              {isSubmitting ? "Đang xử lý..." : "Duyệt & Đi tiếp →"}
-            </Button>
-          </div>
+          )}
         </div>
       )}
     </div>
