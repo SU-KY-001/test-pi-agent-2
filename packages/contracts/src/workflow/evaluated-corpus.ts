@@ -19,6 +19,8 @@ export const EvaluatedSourceSchema = z.object({
   echoChamberFlag: z.boolean(),
   debatedDetails: z.array(z.string()),
   notes: z.string(),
+  url: z.string().optional(),
+  locationInSource: z.string().optional(),
 });
 
 export const EvaluatedCorpusSchema = z.object({

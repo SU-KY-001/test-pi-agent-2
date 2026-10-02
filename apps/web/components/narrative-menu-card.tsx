@@ -2,11 +2,22 @@
 
 import { useEffect, useState } from "react";
 import type * as React from "react";
-import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Layers,
+  ListOrdered,
+  Loader2,
+  MapPin,
+  Sparkles,
+} from "lucide-react";
 import {
   SOURCE_TIER_LABELS,
   type NarrativeFocusSelection,
   type ResearchConsultation,
+  type SourceItem,
 } from "@repo/contracts";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
@@ -31,17 +42,35 @@ export interface NarrativeMenuCardProps {
   onApprove: (selection: NarrativeFocusSelection) => void | Promise<void>;
 }
 
-export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, onApprove }: NarrativeMenuCardProps) {
+export function NarrativeMenuCard({
+  consultation,
+  activeVersion,
+  isSubmitting,
+  onApprove,
+}: NarrativeMenuCardProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const selectedOption = consultation.narrativeMenu[selectedIndex] ?? consultation.narrativeMenu[0];
+  const selectedOption =
+    consultation.narrativeMenu[selectedIndex] ?? consultation.narrativeMenu[0];
   const [seriesTitle, setSeriesTitle] = useState(selectedOption?.seriesTitle ?? "");
   const [episodeTitles, setEpisodeTitles] = useState<string[]>(
     selectedOption ? [...selectedOption.episodeTitles] : ["", "", ""]
   );
   const [editorialNotes, setEditorialNotes] = useState("");
 
+  // Quản lý trạng thái đóng/mở Accordion cho 21 nguồn ứng viên
+  const [isSourcesOpen, setIsSourcesOpen] = useState(false);
+  const [expandedSourceIds, setExpandedSourceIds] = useState<Record<string, boolean>>({});
+
+  const toggleSource = (id: string) => {
+    setExpandedSourceIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
   useEffect(() => {
-    const option = consultation.narrativeMenu[selectedIndex] ?? consultation.narrativeMenu[0];
+    const option =
+      consultation.narrativeMenu[selectedIndex] ?? consultation.narrativeMenu[0];
     if (!option) return;
     setSeriesTitle(option.seriesTitle);
     setEpisodeTitles([...option.episodeTitles]);
@@ -57,7 +86,9 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
   }
 
   const canApprove =
-    seriesTitle.trim().length > 0 && episodeTitles.every((title) => title.trim().length > 0) && !isSubmitting;
+    seriesTitle.trim().length > 0 &&
+    episodeTitles.every((title) => title.trim().length > 0) &&
+    !isSubmitting;
 
   const handleApprove = () => {
     if (!canApprove) return;
@@ -65,13 +96,21 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
     void onApprove({
       selectedFocusType: selectedOption.focusType,
       seriesTitle: seriesTitle.trim(),
-      episodeTitles: [trimmedTitles[0] ?? "", trimmedTitles[1] ?? "", trimmedTitles[2] ?? ""],
-      editorialNotes: editorialNotes.trim().length > 0 ? editorialNotes.trim() : undefined,
+      episodeTitles: [
+        trimmedTitles[0] ?? "",
+        trimmedTitles[1] ?? "",
+        trimmedTitles[2] ?? "",
+      ],
+      editorialNotes:
+        editorialNotes.trim().length > 0 ? editorialNotes.trim() : undefined,
     });
   };
 
+  const sources = consultation.sourcesCatalogue ?? [];
+
   return (
     <section className="space-y-4 rounded-xl border border-amber-400/40 bg-amber-500/5 p-4">
+      {/* 1. Tiêu đề Gate 0 & Badge */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-bold text-amber-200">
           <Sparkles className="size-4" aria-hidden />
@@ -82,6 +121,7 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
         </Badge>
       </div>
 
+      {/* 2. Thống kê bối cảnh */}
       <div className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-[11px] sm:grid-cols-4">
         <div>
           <span className="block text-muted-foreground">Chủ đề</span>
@@ -98,37 +138,143 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
         <div>
           <span className="block text-muted-foreground">Nguồn đề xuất</span>
           <span className="font-medium tabular-nums text-foreground">
-            {consultation.sourcesCatalogue.length} nguồn · {consultation.narrativeMenu.length} trọng tâm
+            {sources.length} nguồn · {consultation.narrativeMenu.length} trọng tâm
           </span>
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <span className="text-xs font-semibold text-foreground">Nguồn ứng viên</span>
-        <ul className="space-y-1">
-          {consultation.sourcesCatalogue.map((source) => (
-            <li
-              key={source.id}
-              className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-background/40 px-2 py-1.5"
-            >
-              <span className="text-[11px] font-medium text-foreground">{source.name}</span>
-              <Badge variant="outline" className={cn("text-[10px] font-normal", TIER_CLASS[source.tier])}>
-                {SOURCE_TIER_LABELS[source.tier]}
-              </Badge>
-              <ReliabilityBar score={source.reliabilityScore} />
-              {source.isPrimaryAssertionSource && (
-                <Badge variant="outline" className="border-emerald-500/40 text-[10px] text-emerald-300">
-                  Nguồn khẳng định
-                </Badge>
-              )}
-              <span className="w-full text-[11px] text-muted-foreground">
-                {source.authorOrOrigin} · {source.crossVerificationNotes}
-              </span>
-            </li>
-          ))}
-        </ul>
+      {/* 3. Khối Nguồn ứng viên: Accordion thu gọn tổng thể + Card thu gọn từng nguồn */}
+      <div className="rounded-lg border border-border/60 bg-background/50 p-3 shadow-xs">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setIsSourcesOpen(!isSourcesOpen)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setIsSourcesOpen(!isSourcesOpen);
+            }
+          }}
+          className="flex cursor-pointer items-center justify-between gap-2 select-none"
+        >
+          <div className="flex items-center gap-2">
+            <Layers className="size-3.5 text-primary" />
+            <span className="text-xs font-semibold text-foreground">
+              Danh mục nguồn ứng viên ({sources.length} nguồn)
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              {isSourcesOpen ? "Thu gọn danh sách" : "Xem toàn bộ nguồn"}
+            </span>
+            <Button variant="ghost" size="icon" className="size-5 p-0">
+              {isSourcesOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* Nội dung danh sách nguồn mở rộng */}
+        {isSourcesOpen && (
+          <div className="mt-3 space-y-1.5 border-t border-border/40 pt-2.5 max-h-[380px] overflow-y-auto pr-1">
+            {sources.map((source: SourceItem) => {
+              const isExpanded = expandedSourceIds[source.id] ?? false;
+              return (
+                <div
+                  key={source.id}
+                  className={cn(
+                    "rounded-md border border-border/50 bg-background/60 transition-all",
+                    isExpanded ? "border-amber-400/40 bg-accent/15" : "hover:border-border"
+                  )}
+                >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleSource(source.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleSource(source.id);
+                      }
+                    }}
+                    className="flex cursor-pointer items-center justify-between gap-2 p-2 select-none"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Button variant="ghost" size="icon" className="size-4 shrink-0 p-0 text-muted-foreground">
+                        {isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                      </Button>
+                      <Badge variant="outline" className={cn("text-[9px] font-normal shrink-0", TIER_CLASS[source.tier])}>
+                        {SOURCE_TIER_LABELS[source.tier]}
+                      </Badge>
+                      <span className="truncate text-xs font-medium text-foreground">{source.name}</span>
+                      {source.isPrimaryAssertionSource && (
+                        <Badge variant="outline" className="border-emerald-500/40 text-[9px] text-emerald-300 shrink-0">
+                          Nguồn khẳng định
+                        </Badge>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <ReliabilityBar score={source.reliabilityScore} />
+                      {source.url && (
+                        <a
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-primary hover:underline p-0.5"
+                          title="Mở liên kết nguồn"
+                        >
+                          <ExternalLink className="size-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="space-y-1.5 border-t border-border/40 bg-muted/20 p-2 text-xs text-muted-foreground">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-[11px]">
+                        <div>
+                          <span className="text-foreground/70 font-medium">Tác giả / Xuất xứ:</span>{" "}
+                          <span className="text-foreground">{source.authorOrOrigin}</span>
+                        </div>
+                        {source.locationInSource && (
+                          <div className="flex items-center gap-1 text-primary font-medium">
+                            <MapPin className="size-3 shrink-0" />
+                            <span>Vị trí trong nguồn: {source.locationInSource}</span>
+                          </div>
+                        )}
+                        {source.url && (
+                          <div className="flex items-center gap-1 md:col-span-2">
+                            <ExternalLink className="size-3 shrink-0" />
+                            <span className="text-foreground/70 font-medium">URL:</span>
+                            <a
+                              href={source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline truncate max-w-[360px]"
+                            >
+                              {source.url}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+
+                      {source.crossVerificationNotes && (
+                        <p className="text-[11px] leading-relaxed text-muted-foreground pt-1 border-t border-border/20">
+                          <span className="font-semibold text-foreground">Đối chiếu chéo: </span>
+                          {source.crossVerificationNotes}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
+      {/* 4. Menu trọng tâm kể */}
       <fieldset className="space-y-2">
         <legend className="text-xs font-semibold text-foreground">Menu 5 trọng tâm kể</legend>
         <div className="space-y-2">
@@ -173,7 +319,8 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
         </div>
       </fieldset>
 
-      <div className="space-y-2 rounded-lg border border-border/60 bg-background/50 p-3">
+      {/* 5. Vùng biểu mẫu tinh chỉnh biên tập trước khi phê duyệt */}
+      <div className="space-y-3 rounded-lg border border-border/60 bg-background/50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-1">
           <span className="text-xs font-semibold text-foreground">
             Biên tập trước khi duyệt · trọng tâm: {selectedOption.focusLabel}
@@ -210,8 +357,10 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
             </button>
           </div>
         </div>
+
+        {/* Tên Series */}
         <label className="block space-y-1">
-          <span className="text-[11px] text-muted-foreground">Tên series</span>
+          <span className="text-[11px] font-medium text-muted-foreground">Tên series podcast</span>
           <input
             value={seriesTitle}
             onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSeriesTitle(event.target.value)}
@@ -219,23 +368,41 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
             aria-label="Tên series podcast"
           />
         </label>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {episodeTitles.map((title, index) => (
-            <label key={index} className="block space-y-1">
-              <span className="text-[11px] text-muted-foreground">Tên tập {index + 1}</span>
-              <input
-                value={title}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                  setEpisodeTitles((prev) => prev.map((item, position) => (position === index ? event.target.value : item)))
-                }
-                className={TITLE_INPUT_CLASS}
-                aria-label={`Tên tập ${index + 1}`}
-              />
-            </label>
-          ))}
+
+        {/* 3 Input tên 3 tập: Xếp DỌC thay vì ngang để có đủ không gian cho tên dài */}
+        <div className="space-y-1.5 pt-1">
+          <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+            <ListOrdered className="size-3 text-primary" />
+            <span>Tên 3 tập thành phần (Xếp theo thứ tự phát sóng):</span>
+          </label>
+          <div className="space-y-2">
+            {episodeTitles.map((title, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-2 rounded-md border border-border/50 bg-background/50 px-2 py-1"
+              >
+                <span className="shrink-0 flex items-center justify-center size-5 rounded-full bg-muted font-mono text-[10px] font-semibold text-foreground">
+                  {index + 1}
+                </span>
+                <input
+                  value={title}
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                    setEpisodeTitles((prev) =>
+                      prev.map((item, position) => (position === index ? event.target.value : item))
+                    )
+                  }
+                  className="h-7 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                  aria-label={`Tên tập ${index + 1}`}
+                  placeholder={`Tập ${index + 1}: Nhập tên tập…`}
+                />
+              </div>
+            ))}
+          </div>
         </div>
-        <label className="block space-y-1">
-          <span className="text-[11px] text-muted-foreground">Ghi chú biên tập (không bắt buộc)</span>
+
+        {/* Ghi chú biên tập */}
+        <label className="block space-y-1 pt-1">
+          <span className="text-[11px] font-medium text-muted-foreground">Ghi chú biên tập (không bắt buộc)</span>
           <Textarea
             rows={2}
             value={editorialNotes}
@@ -244,8 +411,13 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
             className="resize-y text-xs"
           />
         </label>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {!canApprove && <span className="text-[11px] text-muted-foreground">Điền đủ tên series và 3 tên tập để duyệt.</span>}
+
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+          {!canApprove && (
+            <span className="text-[11px] text-muted-foreground">
+              Điền đủ tên series và 3 tên tập để duyệt.
+            </span>
+          )}
           <Button
             size="sm"
             onClick={handleApprove}

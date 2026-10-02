@@ -4,7 +4,7 @@ import path from "node:path";
 
 // Load repo root and local .env if present
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
-dotenv.config({ path: path.resolve(repoRoot, ".env") });
+dotenv.config({ path: path.resolve(repoRoot, ".env"), override: true });
 dotenv.config();
 
 const EnvSchema = z

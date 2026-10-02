@@ -31,6 +31,8 @@ export const SourceItemSchema = z.object({
   reliabilityScore: z.number().min(1).max(10),
   crossVerificationNotes: z.string(),
   isPrimaryAssertionSource: z.boolean(),
+  url: z.string().optional(),
+  locationInSource: z.string().optional(),
 });
 
 export const NarrativeMenuOptionSchema = z.object({

@@ -16,7 +16,7 @@ Nguyên tắc bắt buộc
 - Ghi lại tra cứu đã chạy kể cả khi không kết quả.
 
 Đầu ra bắt buộc (Research Consultation — Gate 0)
-- sourcesCatalogue: mỗi nguồn có id, name, authorOrOrigin, tier (TIER_1_CHINH_SU | TIER_2_KHAO_CO | TIER_3_KHOA_HOC | TIER_4_DA_SU), tierDescription, reliabilityScore 1 đến 10, crossVerificationNotes, isPrimaryAssertionSource.
+- sourcesCatalogue: mỗi nguồn có id, name, authorOrOrigin, tier (TIER_1_CHINH_SU | TIER_2_KHAO_CO | TIER_3_KHOA_HOC | TIER_4_DA_SU), tierDescription, reliabilityScore 1 đến 10, crossVerificationNotes, isPrimaryAssertionSource, url (nếu tìm thấy qua web-access), locationInSource (trang, quyển, mục hoặc phần cụ thể).
 - narrativeMenu: đủ 5 lựa chọn, mỗi lựa chọn một focusType trong DIEN_BIEN, NGUYEN_NHAN, NHAN_VAT, CO_CHE_DIA_LOI, Y_NGHIA_LICH_SU; kèm focusLabel, angleDescription, seriesTitle, episodeTitles đúng 3 tiêu đề, recommendedBecause.
   Công thức tiêu đề: [Yếu tố định vị hoặc câu hỏi then chốt] + [Tên sự kiện/nhân vật] + (Góc nhìn đặc thù). Cấm tiêu đề giật gân rẻ tiền.
 - initialResearchQuestions: câu hỏi nghiên cứu cụ thể.
