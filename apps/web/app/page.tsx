@@ -30,6 +30,7 @@ import {
   fetchWorkflowTree,
   rerunStep,
 } from "../lib/workflow-api";
+import { PRESET_TOPICS } from "../lib/preset-topics";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -445,6 +446,30 @@ export default function HomePage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 p-4 pt-1">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-muted-foreground">Chọn nhanh chủ đề mẫu:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PRESET_TOPICS.map((preset) => (
+                      <Button
+                        key={preset.label}
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className={cn(
+                          "h-6 px-2 text-[11px] rounded-full",
+                          topic === preset.topic && "border-primary bg-primary/10 text-primary"
+                        )}
+                        onClick={() => setTopic(preset.topic)}
+                        title={preset.description}
+                      >
+                        ⚡ {preset.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
                 <Textarea
                   rows={3}
                   value={topic}

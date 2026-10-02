@@ -174,9 +174,42 @@ export function NarrativeMenuCard({ consultation, activeVersion, isSubmitting, o
       </fieldset>
 
       <div className="space-y-2 rounded-lg border border-border/60 bg-background/50 p-3">
-        <span className="text-xs font-semibold text-foreground">
-          Biên tập trước khi duyệt · trọng tâm đã chọn: {selectedOption.focusLabel}
-        </span>
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <span className="text-xs font-semibold text-foreground">
+            Biên tập trước khi duyệt · trọng tâm: {selectedOption.focusLabel}
+          </span>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">Điền nhanh:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSeriesTitle(selectedOption.seriesTitle);
+                setEpisodeTitles([...selectedOption.episodeTitles]);
+                setEditorialNotes("Ưu tiên tư liệu chính sử, giữ giọng điệu trung tính hào hùng.");
+              }}
+              className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30"
+              title="Điền dữ liệu mẫu đề xuất"
+            >
+              ⚡ Chuẩn
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSeriesTitle(`[Podcast] ${selectedOption.seriesTitle} (Bản Phát Thanh)`);
+                setEpisodeTitles([
+                  `Tập 1: Tiền sự kiện & Khúc dạo đầu`,
+                  `Tập 2: Đỉnh điểm chiến trường & Cơ chế then chốt`,
+                  `Tập 3: Kết cục & Bài học nghìn năm`,
+                ]);
+                setEditorialNotes("Nhịp điệu dồn dập, gọt câu ngắn cho phát thanh viên.");
+              }}
+              className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-medium text-sky-300 hover:bg-sky-500/30"
+              title="Điền kịch tính cho phát thanh"
+            >
+              ⚡ Kịch tính
+            </button>
+          </div>
+        </div>
         <label className="block space-y-1">
           <span className="text-[11px] text-muted-foreground">Tên series</span>
           <input
