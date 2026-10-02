@@ -70,7 +70,7 @@ const STEP_ICONS: Record<StepType, typeof FileSearch> = {
   FACT_CHECKER: ShieldCheck,
 };
 
-function StepStatusIcon({ status, Icon }: { status: StepStatus; Icon: typeof FileSearch }) {
+function StepStatusIcon({ status }: { status: StepStatus; Icon?: typeof FileSearch }) {
   if (status === "RUNNING" || status === "QUEUED") {
     return <Loader2 className="size-4 animate-spin text-sky-600 dark:text-sky-400" aria-hidden />;
   }
@@ -404,6 +404,18 @@ export function StepCard({
 }: StepCardProps) {
   const [showRawJson, setShowRawJson] = useState(false);
 
+  // Mặc định: Chỉ tự động mở (expand) khi bước đang xử lý (RUNNING, QUEUED) hoặc đang chờ duyệt (WAITING_FOR_HUMAN).
+  // Các bước chưa chạy (PENDING) hoặc đã xong (COMPLETED, STALE) mặc định đóng để giao diện gọn gàng.
+  const isCurrentlyActive = status === "RUNNING" || status === "QUEUED" || status === "WAITING_FOR_HUMAN";
+  const [isExpanded, setIsExpanded] = useState<boolean>(isCurrentlyActive);
+
+  // Đồng bộ trạng thái mở nếu bước chuyển sang đang chạy hoặc chờ duyệt
+  React.useEffect(() => {
+    if (isCurrentlyActive) {
+      setIsExpanded(true);
+    }
+  }, [isCurrentlyActive]);
+
   const Icon = STEP_ICONS[type];
   const activeVersionData = versions.find((version) => version.version === activeVersion);
   const output = activeVersionData?.outputJson ?? null;
@@ -419,7 +431,18 @@ export function StepCard({
         status === "STALE" && "border-dashed bg-muted/20 opacity-80"
       )}
     >
-      <CardHeader className="p-4 pb-3">
+      <CardHeader
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+        className="p-4 pb-3 cursor-pointer select-none transition-colors hover:bg-muted/10"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <span
@@ -441,7 +464,7 @@ export function StepCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {currentVersion != null && (
               <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">v{currentVersion}</span>
             )}
@@ -450,6 +473,14 @@ export function StepCard({
                 ✓ Đã duyệt v{approvedVersion}
               </span>
             )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 p-0 text-muted-foreground hover:text-foreground"
+              aria-label={isExpanded ? "Thu gọn card" : "Mở rộng card"}
+            >
+              {isExpanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+            </Button>
           </div>
         </div>
 
@@ -472,7 +503,8 @@ export function StepCard({
         )}
       </CardHeader>
 
-      <CardContent className="space-y-3 p-4 pt-0">
+      {isExpanded && (
+        <CardContent className="space-y-3 p-4 pt-0 border-t border-border/40 mt-1">
         {versions.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
             <span className="text-[11px] font-medium text-muted-foreground">Phiên bản:</span>
@@ -556,6 +588,7 @@ export function StepCard({
           </div>
         )}
       </CardContent>
+      )}
     </Card>
   );
 }
