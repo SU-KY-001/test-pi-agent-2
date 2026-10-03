@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import {
   Activity,
+  AlertCircle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -55,6 +56,7 @@ export interface StepCardProps {
   onRerun: (feedback: string) => Promise<void>;
   onContinue?: (version: number, guidance?: string) => Promise<void>;
   onDirectEdit?: (baseVersion: number, editedOutput: unknown, note?: string) => Promise<void>;
+  onOpenVisualEdit?: () => void;
   continueLabel?: string;
   /** Card nghiệp vụ riêng của từng Gate (Gate 0/1/2), do page dựng. */
   gateContent?: React.ReactNode;
@@ -399,6 +401,7 @@ export function StepCard({
   onRerun,
   onContinue,
   onDirectEdit,
+  onOpenVisualEdit,
   continueLabel,
   gateContent,
 }: StepCardProps) {
@@ -486,9 +489,7 @@ export function StepCard({
 
         {incomingGuidance && (
           <div className="mt-2.5 flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
-            <span className="text-sm" aria-hidden>
-              💡
-            </span>
+            <Sparkles className="size-3.5 shrink-0 mt-0.5 text-primary" aria-hidden />
             <div>
               <span className="font-semibold">Lời dặn từ bước trước: </span>
               <span className="italic">{incomingGuidance}</span>
@@ -497,8 +498,9 @@ export function StepCard({
         )}
 
         {errorMessage && (
-          <div className="mt-2.5 rounded-lg border border-red-300 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-300">
-            ⚠️ {errorMessage}
+          <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-600 dark:text-red-400">
+            <AlertCircle className="size-3.5 shrink-0" aria-hidden />
+            <span>{errorMessage}</span>
           </div>
         )}
       </CardHeader>
@@ -553,6 +555,7 @@ export function StepCard({
             onRerun={onRerun}
             onContinue={onContinue}
             onDirectEdit={onDirectEdit}
+            onOpenVisualEdit={onOpenVisualEdit}
             isSubmitting={isSubmitting}
             continueLabel={continueLabel}
           />

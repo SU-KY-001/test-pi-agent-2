@@ -11,6 +11,7 @@ import {
   ListOrdered,
   Loader2,
   MapPin,
+  Pencil,
   Sparkles,
 } from "lucide-react";
 import {
@@ -24,6 +25,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { ReliabilityBar } from "./source-matrix-card";
+import { SourceEditModal } from "./source-edit-modal";
 
 const TITLE_INPUT_CLASS =
   "border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 dark:bg-input/30 h-8 w-full rounded-md border bg-transparent px-2.5 text-xs shadow-xs outline-none focus-visible:ring-[3px]";
@@ -40,6 +42,7 @@ export interface NarrativeMenuCardProps {
   activeVersion: number;
   isSubmitting: boolean;
   onApprove: (selection: NarrativeFocusSelection) => void | Promise<void>;
+  onDirectEdit?: (baseVersion: number, editedOutput: unknown, note?: string) => Promise<void>;
 }
 
 export function NarrativeMenuCard({
@@ -47,6 +50,7 @@ export function NarrativeMenuCard({
   activeVersion,
   isSubmitting,
   onApprove,
+  onDirectEdit,
 }: NarrativeMenuCardProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selectedOption =
@@ -57,7 +61,8 @@ export function NarrativeMenuCard({
   );
   const [editorialNotes, setEditorialNotes] = useState("");
 
-  // Quản lý trạng thái đóng/mở Accordion cho 21 nguồn ứng viên
+  // Quản lý modal chỉnh sửa nguồn và trạng thái đóng/mở danh sách nguồn
+  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [isSourcesOpen, setIsSourcesOpen] = useState(false);
   const [expandedSourceIds, setExpandedSourceIds] = useState<Record<string, boolean>>({});
 
@@ -66,6 +71,20 @@ export function NarrativeMenuCard({
       ...prev,
       [id]: !prev[id],
     }));
+  };
+
+  const handleSaveSources = async (updatedSources: SourceItem[]) => {
+    if (!onDirectEdit) return;
+    const updatedConsultation: ResearchConsultation = {
+      ...consultation,
+      sourcesCatalogue: updatedSources,
+    };
+    await onDirectEdit(
+      activeVersion,
+      updatedConsultation,
+      `Chỉnh sửa danh sách nguồn (${updatedSources.length} nguồn)`
+    );
+    setIsSourceModalOpen(false);
   };
 
   useEffect(() => {
@@ -164,8 +183,24 @@ export function NarrativeMenuCard({
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {onDirectEdit && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isSubmitting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSourceModalOpen(true);
+                }}
+                className="h-6 gap-1 px-2 text-[11px] font-medium"
+              >
+                <Pencil className="size-3" />
+                <span>Chỉnh sửa nguồn</span>
+              </Button>
+            )}
             <span className="text-[11px] text-muted-foreground">
-              {isSourcesOpen ? "Thu gọn danh sách" : "Xem toàn bộ nguồn"}
+              {isSourcesOpen ? "Thu gọn" : "Xem toàn bộ"}
             </span>
             <Button variant="ghost" size="icon" className="size-5 p-0">
               {isSourcesOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -334,10 +369,10 @@ export function NarrativeMenuCard({
                 setEpisodeTitles([...selectedOption.episodeTitles]);
                 setEditorialNotes("Ưu tiên tư liệu chính sử, giữ giọng điệu trung tính hào hùng.");
               }}
-              className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30"
+              className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-muted/80 transition-colors"
               title="Điền dữ liệu mẫu đề xuất"
             >
-              ⚡ Chuẩn
+              Mẫu chuẩn
             </button>
             <button
               type="button"
@@ -350,10 +385,10 @@ export function NarrativeMenuCard({
                 ]);
                 setEditorialNotes("Nhịp điệu dồn dập, gọt câu ngắn cho phát thanh viên.");
               }}
-              className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-medium text-sky-300 hover:bg-sky-500/30"
+              className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-muted/80 transition-colors"
               title="Điền kịch tính cho phát thanh"
             >
-              ⚡ Kịch tính
+              Bản phát thanh
             </button>
           </div>
         </div>
@@ -448,6 +483,17 @@ export function NarrativeMenuCard({
             ))}
           </ul>
         </details>
+      )}
+
+      {/* Modal chỉnh sửa danh sách nguồn */}
+      {onDirectEdit && (
+        <SourceEditModal
+          isOpen={isSourceModalOpen}
+          onClose={() => setIsSourceModalOpen(false)}
+          initialSources={sources}
+          onSave={handleSaveSources}
+          isSubmitting={isSubmitting}
+        />
       )}
     </section>
   );

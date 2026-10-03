@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { AlertCircle, CheckCircle2, Code2, Pencil, RotateCcw } from "lucide-react";
 import type { StepType } from "@repo/contracts";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -78,6 +79,7 @@ interface ActionDeckProps {
   /** Bỏ trống khi hành động duyệt do card chuyên biệt đảm nhiệm (Gate 0). */
   onContinue?: (version: number, guidance?: string) => Promise<void>;
   onDirectEdit?: (baseVersion: number, editedOutput: unknown, note?: string) => Promise<void>;
+  onOpenVisualEdit?: () => void;
   isSubmitting: boolean;
   continueLabel?: string;
 }
@@ -89,6 +91,7 @@ export function ActionDeck({
   onRerun,
   onContinue,
   onDirectEdit,
+  onOpenVisualEdit,
   isSubmitting,
   continueLabel = "Duyệt & Đi tiếp →",
 }: ActionDeckProps) {
@@ -132,17 +135,32 @@ export function ActionDeck({
               : `Chạy lại nhánh mới cho ${stepType} (bản v${currentVersion})`}
           </h4>
         </div>
-        {onDirectEdit && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={isSubmitting}
-            onClick={handleToggleDirectEdit}
-            className="h-7 text-xs font-medium"
-          >
-            {isEditingDirect ? "Đóng chỉnh sửa" : "✏️ Sửa trực tiếp JSON"}
-          </Button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onOpenVisualEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSubmitting}
+              onClick={onOpenVisualEdit}
+              className="h-7 gap-1 text-xs font-medium"
+            >
+              <Pencil className="size-3" />
+              <span>Chỉnh sửa kết quả</span>
+            </Button>
+          )}
+          {onDirectEdit && (
+            <Button
+              size="sm"
+              variant={onOpenVisualEdit ? "ghost" : "outline"}
+              disabled={isSubmitting}
+              onClick={handleToggleDirectEdit}
+              className="h-7 gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Code2 className="size-3" />
+              <span>{isEditingDirect ? "Đóng sửa JSON" : onOpenVisualEdit ? "JSON thô" : "Sửa JSON"}</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       {isEditingDirect ? (
@@ -157,7 +175,12 @@ export function ActionDeck({
             disabled={isSubmitting}
             className="min-h-[180px] bg-muted/30 font-mono text-xs"
           />
-          {editError && <p className="text-xs font-medium text-red-500">⚠️ {editError}</p>}
+          {editError && (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-red-500">
+              <AlertCircle className="size-3.5 shrink-0" />
+              <span>{editError}</span>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <Button
               size="sm"
@@ -183,9 +206,7 @@ export function ActionDeck({
           <div className="flex flex-col justify-between space-y-3 rounded-lg border border-amber-300/60 bg-card p-4 shadow-xs dark:border-amber-900/60">
             <div className="space-y-2">
               <div className="flex items-center gap-1.5">
-                <span className="text-sm" aria-hidden>
-                  🔄
-                </span>
+                <RotateCcw className="size-3.5 text-amber-600 dark:text-amber-400" aria-hidden />
                 <span className="text-xs font-semibold text-foreground">Tạo nhánh mới từ node này</span>
               </div>
               <p className="text-[11px] leading-snug text-muted-foreground">
@@ -219,9 +240,7 @@ export function ActionDeck({
             <div className="flex flex-col justify-between space-y-3 rounded-lg border border-emerald-300/60 bg-card p-4 shadow-xs dark:border-emerald-900/60">
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-sm" aria-hidden>
-                    ✅
-                  </span>
+                  <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
                   <span className="text-xs font-semibold text-foreground">Duyệt &amp; chuyển bước</span>
                 </div>
                 <p className="text-[11px] leading-snug text-muted-foreground">

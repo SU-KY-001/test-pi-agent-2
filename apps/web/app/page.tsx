@@ -8,6 +8,7 @@ import {
   Code2,
   FileText,
   Loader2,
+  Pencil,
   Sparkles,
   TreePine,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import {
   type NarrativeFocusSelection,
   type StepType,
   type StepVersion,
+  type StoryOutline,
   type WorkflowTreeResponse,
 } from "@repo/contracts";
 import {
@@ -39,6 +41,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { TracePanel } from "@/components/trace-panel";
 import { StepCard } from "@/components/step-card";
+import { StoryOutlineEditModal } from "@/components/story-outline-edit-modal";
 import { ExecutionTreeView } from "@/components/execution-tree-view";
 import { NarrativeMenuCard } from "@/components/narrative-menu-card";
 import { LivePodcastPreview, formatDuration } from "@/components/live-podcast-preview";
@@ -154,6 +157,7 @@ export default function HomePage() {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"script" | "tree" | "trace" | "json">("script");
+  const [isOutlineModalOpen, setIsOutlineModalOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     if (workflowId == null) return;
@@ -261,6 +265,12 @@ export default function HomePage() {
   const handleDirectEdit = (type: StepType, baseVersion: number, editedOutput: unknown, note?: string) =>
     runAction(type, () => directEditStep(workflowId as number, type, baseVersion, editedOutput, note));
 
+  const handleSaveOutline = async (updatedOutline: StoryOutline) => {
+    if (storyVersion == null) return;
+    await handleDirectEdit("STORY_PLANNER", storyVersion, updatedOutline, "Chỉnh sửa dàn ý kịch bản 3 tập");
+    setIsOutlineModalOpen(false);
+  };
+
   const researchStep = workflow ? stepByType(workflow.steps, "RESEARCHER") : undefined;
   const storyStep = workflow ? stepByType(workflow.steps, "STORY_PLANNER") : undefined;
   const oralizerStep = workflow ? stepByType(workflow.steps, "ORALIZER") : undefined;
@@ -317,6 +327,9 @@ export default function HomePage() {
           activeVersion={researchVersion}
           isSubmitting={acting}
           onApprove={(selection) => handleGateZeroApprove(researchVersion, selection)}
+          onDirectEdit={(baseVersion, editedOutput, note) =>
+            handleDirectEdit("RESEARCHER", baseVersion, editedOutput, note)
+          }
         />
       );
     }
@@ -324,25 +337,43 @@ export default function HomePage() {
     if (type === "STORY_PLANNER") {
       return (
         <div className="space-y-2 rounded-lg border border-border/70 bg-card/60 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-foreground">Nhánh thực thi</span>
-            <span className="text-[11px] text-muted-foreground">
-              {tree ? `${tree.nodes.length} node · ${tree.publications.length} bản xuất bản` : "chưa tải cây"}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void refresh()}
-              className="ml-auto h-7 text-xs"
-              aria-label="Tải lại cây lịch sử thực thi"
-            >
-              <TreePine className="size-3.5" aria-hidden />
-              Tải cây nhánh
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-foreground">Dàn ý kịch bản</span>
+              <span className="text-[11px] text-muted-foreground">
+                {outline ? `${outline.episodes.length} tập · ${outline.seriesTitle}` : "chưa có dàn ý"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {outline && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsOutlineModalOpen(true)}
+                  className="h-7 gap-1 px-2.5 text-xs font-medium"
+                >
+                  <Pencil className="size-3" />
+                  <span>Chỉnh sửa dàn ý</span>
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setRightTab("tree");
+                  void refresh();
+                }}
+                className="h-7 text-xs text-muted-foreground"
+                aria-label="Tải lại cây lịch sử thực thi"
+              >
+                <TreePine className="size-3.5" aria-hidden />
+                <span>Cây nhánh</span>
+              </Button>
+            </div>
           </div>
           {outline && (
             <p className="text-[11px] text-muted-foreground">
-              Duyệt dàn ý “{outline.seriesTitle}” hoặc tạo nhánh mới nếu muốn đổi cấu trúc 3 tập.
+              Duyệt dàn ý “{outline.seriesTitle}” hoặc chỉnh sửa các nhịp kể phân cảnh trước khi viết kịch bản chi tiết.
             </p>
           )}
         </div>
@@ -464,7 +495,7 @@ export default function HomePage() {
                         onClick={() => setTopic(preset.topic)}
                         title={preset.description}
                       >
-                        ⚡ {preset.label}
+                        {preset.label}
                       </Button>
                     ))}
                   </div>
@@ -542,6 +573,11 @@ export default function HomePage() {
                       isGate
                         ? (baseVersion, editedOutput, note) =>
                             handleDirectEdit(definition.type, baseVersion, editedOutput, note)
+                        : undefined
+                    }
+                    onOpenVisualEdit={
+                      definition.type === "STORY_PLANNER" && outline
+                        ? () => setIsOutlineModalOpen(true)
                         : undefined
                     }
                     continueLabel={
@@ -654,6 +690,16 @@ export default function HomePage() {
           <span>Zero external daemons · Local-first</span>
         </div>
       </footer>
+
+      {outline && (
+        <StoryOutlineEditModal
+          isOpen={isOutlineModalOpen}
+          onClose={() => setIsOutlineModalOpen(false)}
+          initialOutline={outline}
+          onSave={handleSaveOutline}
+          isSubmitting={acting}
+        />
+      )}
     </div>
   );
 }
