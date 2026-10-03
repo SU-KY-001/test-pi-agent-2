@@ -82,7 +82,7 @@ export function lintOralText(rawText: string): OralLintResult {
       `Có ${fragments.length} câu cụt dưới ${ORAL_LINT_THRESHOLDS.minWordsPerSentence} từ.`
     );
     for (const fragment of fragments.slice(0, 5)) {
-      detailErrors.push({ kind: "FRAGMENT", detail: "Câu cụt, thiếu liên từ nối.", excerpt: fragment });
+      detailErrors.push({ kind: "FRAGMENT", detail: "Câu cụt, cần diễn đạt trọn vẹn hơn.", excerpt: fragment });
     }
   }
 
